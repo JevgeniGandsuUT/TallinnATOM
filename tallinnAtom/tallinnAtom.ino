@@ -75,23 +75,115 @@ void loop() {
 void handleRoot() {
   String html = R"rawliteral(<!DOCTYPE html>
 <html lang="en">
- 
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Color Picker and Fetch Example</title>
+  <title>LED Controller</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .container {
+      background: #161b22;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 0 20px rgba(0, 255, 200, 0.3);
+      text-align: center;
+      max-width: 420px;
+      width: 100%;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 25px;
+      color: #58a6ff;
+      text-shadow: 0 0 10px rgba(88,166,255,0.6);
+    }
+    label {
+      font-size: 18px;
+      margin-bottom: 15px;
+      display: block;
+      color: #79c0ff;
+    }
+    input[type="color"] {
+      -webkit-appearance: none;
+      border: none;
+      width: 90px;
+      height: 90px;
+      border-radius: 50%;
+      cursor: pointer;
+      padding: 0;
+      box-shadow: 0 0 15px rgba(0,255,200,0.5);
+      overflow: hidden; /* убираем белые края */
+    }
+    input[type="color"]::-webkit-color-swatch-wrapper {
+      padding: 0;
+      border-radius: 50%;
+    }
+    input[type="color"]::-webkit-color-swatch {
+      border: none;
+      border-radius: 50%;
+    }
+    button {
+      margin-top: 20px;
+      background: linear-gradient(90deg, #0ea5e9, #14b8a6);
+      color: #fff;
+      border: none;
+      padding: 12px 25px;
+      border-radius: 25px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    button:hover {
+      background: linear-gradient(90deg, #38bdf8, #2dd4bf);
+      transform: scale(1.05);
+      box-shadow: 0 0 12px rgba(56,189,248,0.7);
+    }
+    .color-preview {
+      margin-top: 25px;
+      font-size: 18px;
+      font-weight: bold;
+      color: #a5d6ff;
+    }
+    .color-circle {
+      display: inline-block;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: 2px solid #333;
+      margin-left: 12px;
+      vertical-align: middle;
+      box-shadow: 0 0 10px rgba(255,255,255,0.2);
+      transition: background-color 0.6s ease, box-shadow 0.6s ease;
+    }
+  </style>
 </head>
- 
 <body>
- 
-  <label for="colorPicker">Выберите цвет: </label>
-  <input type="color" id="colorPicker" />
-  <br>
-  <button id="getButton">Получить данные</button>
- 
+  <div class="container">
+    <h1>LED Controller</h1>
+    <label for="colorPicker">Choose a color:</label>
+    <input type="color" id="colorPicker" />
+    <br>
+    <button id="getButton">Get current color</button>
+    <div class="color-preview">
+      Current color: <span id="currentColorText">#000000</span>
+      <span class="color-circle" id="currentColorBox"></span>
+    </div>
+  </div>
+
   <script>
     const colorInput = document.getElementById('colorPicker');
     const getButton = document.getElementById('getButton');
+    const currentColorText = document.getElementById('currentColorText');
+    const currentColorBox = document.getElementById('currentColorBox');
  
     let currentColor;
  
@@ -101,46 +193,53 @@ void handleRoot() {
         .then(data => {
           currentColor = data;
           colorInput.value = currentColor;
+          currentColorText.textContent = currentColor;
+          currentColorBox.style.backgroundColor = currentColor;
+          currentColorBox.style.boxShadow = `0 0 20px ${currentColor}`;
         })
         .catch(error => {
-          console.error('Ошибка при запросе:', error);
+          console.error('Error while fetching:', error);
         });
     }
  
     window.onload = function () {
       getCurrentColor();
-      colorInput.value = currentColor;
     }
  
     getButton.addEventListener('click', () => {
       fetch('http://192.168.4.1/get')
         .then(response => response.text())
         .then(data => {
-          console.log('Ответ от сервера:', data);
+          console.log('Response from server:', data);
+          currentColorText.textContent = data;
+          currentColorBox.style.backgroundColor = data;
+          currentColorBox.style.boxShadow = `0 0 20px ${data}`;
         })
         .catch(error => {
-          console.error('Ошибка при запросе:', error);
+          console.error('Error while fetching:', error);
         });
     });
  
     colorInput.addEventListener('change', () => {
       let selectedColor = colorInput.value;
       selectedColor = selectedColor.replace('#', '');
-      console.log(selectedColor)
+      console.log('Selected color:', selectedColor)
       fetch(`http://192.168.4.1/set?value=${selectedColor}`)
         .then(response => response.text())
         .then(data => {
-          console.log('Ответ от сервера:', data);
+          console.log('Response from server:', data);
+          currentColorText.textContent = data;
+          currentColorBox.style.backgroundColor = data;
+          currentColorBox.style.boxShadow = `0 0 20px ${data}`;
         })
         .catch(error => {
-          console.error('Ошибка при запросе:', error);
+          console.error('Error while sending color:', error);
         });
     });
   </script>
- 
 </body>
- 
-</html>)rawliteral";
+</html>
+)rawliteral";
 
 
 //server.serveStatic("/", SPIFFS, "/")
