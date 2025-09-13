@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <FastLED.h> 
+#include "SPIFFS.h"
 
 
 const char* ssid = "TallinnAtom";
@@ -32,6 +33,7 @@ void setup() {
 
   server.on("/", handleRoot);
   server.on("/get", getCurrentLedColorInHEX);
+  server.on("/set", setCurrentLedColorInHEX);
   server.begin();
   Serial.println("HTTP server started");
 }
@@ -45,9 +47,84 @@ void loop() {
   delay(1000);
 }
 
-void handleRoot() {
 
+void handleRoot() {
+  String html = R"rawliteral(<!DOCTYPE html>
+<html lang="en">
+ 
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Color Picker and Fetch Example</title>
+</head>
+ 
+<body>
+ 
+  <label for="colorPicker">Выберите цвет: </label>
+  <input type="color" id="colorPicker" />
+  <br>
+  <button id="getButton">Получить данные</button>
+ 
+  <script>
+    const colorInput = document.getElementById('colorPicker');
+    const getButton = document.getElementById('getButton');
+ 
+    let currentColor;
+ 
+    const getCurrentColor = () => {
+      fetch('http://192.168.4.1/get')
+        .then(response => response.text())
+        .then(data => {
+          currentColor = data;
+          colorInput.value = currentColor;
+        })
+        .catch(error => {
+          console.error('Ошибка при запросе:', error);
+        });
+    }
+ 
+    window.onload = function () {
+      getCurrentColor();
+      colorInput.value = currentColor;
+    }
+ 
+    getButton.addEventListener('click', () => {
+      fetch('http://192.168.4.1/get')
+        .then(response => response.text())
+        .then(data => {
+          console.log('Ответ от сервера:', data);
+        })
+        .catch(error => {
+          console.error('Ошибка при запросе:', error);
+        });
+    });
+ 
+    colorInput.addEventListener('change', () => {
+      let selectedColor = colorInput.value;
+      selectedColor = selectedColor.replace('#', '');
+      console.log(selectedColor)
+      fetch(`http://192.168.4.1/set?value=${selectedColor}`)
+        .then(response => response.text())
+        .then(data => {
+          console.log('Ответ от сервера:', data);
+        })
+        .catch(error => {
+          console.error('Ошибка при запросе:', error);
+        });
+    });
+  </script>
+ 
+</body>
+ 
+</html>)rawliteral";
+
+
+//server.serveStatic("/", SPIFFS, "/")
+   //   .setDefaultFile("index.html")
+     // .setCacheControl("max-age=31536000, immutable");
+server.send(200, "text/html", html);
 }
+
 
 void getCurrentLedColorInHEX(){  
     // Get color in HEX
@@ -55,4 +132,35 @@ void getCurrentLedColorInHEX(){
     sprintf(colorHex, "%02X%02X%02X", leds[0].r, leds[0].g, leds[0].b);
     String response = "#"+String(colorHex);
     server.send(200, "text/html", response);
+}
+
+void setCurrentLedColorInHEX(){  
+    String incomingHex = server.arg("value");  // например "#FF00FF" или "FF00FF"
+    
+    // уберём решётку если есть
+    if (incomingHex.startsWith("#")) {
+        incomingHex = incomingHex.substring(1);
+    }
+
+    if (incomingHex.length() == 6) {
+        long number = strtol(incomingHex.c_str(), NULL, 16);
+
+        byte r = (number >> 16) & 0xFF;
+        byte g = (number >> 8) & 0xFF;
+        byte b = number & 0xFF;
+
+        leds[0] = CRGB(r, g, b);
+        FastLED.show();
+        // Сформировать ответ с подтверждением
+        char colorHex[8];
+        sprintf(colorHex, "#%02X%02X%02X", r, g, b);
+        server.send(200, "text/html", colorHex);
+    } else {
+        server.send(400, "text/html", "Invalid HEX format");
+    }
+    // Get color in HEX
+   //char colorHex[7];  
+    //sprintf(colorHex, "%02X%02X%02X", leds[0].r, leds[0].g, leds[0].b);
+    //String response = "#"+String(colorHex);
+    //server.send(200, "text/html", response);
 }
