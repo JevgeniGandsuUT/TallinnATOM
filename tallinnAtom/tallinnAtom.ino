@@ -2,16 +2,29 @@
 #include <WebServer.h>
 #include <FastLED.h> 
 #include "SPIFFS.h"
+#include <Preferences.h>
+Preferences prefs;
 
-
-const char* ssid = "TallinnAtom";
-const char* password = "12345678";
 IPAddress IP;
 WebServer server(80);
 
 #define DATA_PIN 27    
 #define NUM_LEDS 1   
 CRGB leds[NUM_LEDS];
+
+void saveWifi(const String& ssid, const String& pass) {
+  prefs.begin("wifi", false);    // namespace "wifi"
+  prefs.putString("ssid", ssid);
+  prefs.putString("pass", pass);
+  prefs.end();
+}
+
+void loadWifi(String& ssid, String& pass) {
+  prefs.begin("wifi", true);
+  ssid = prefs.getString("ssid", "");
+  pass = prefs.getString("pass", "");
+  prefs.end();
+}
 
 void setup() {
 
@@ -24,8 +37,17 @@ void setup() {
 
 
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(ssid, password);
 
+
+
+  String ssid, pass;
+  loadWifi(ssid, pass);
+  if (ssid == "") {
+    ssid = "TallinnAtom";
+    pass = "12345678";
+  }
+
+  WiFi.softAP(ssid.c_str(), pass.c_str());
   
   IP = WiFi.softAPIP(); // Needed IP adress to get to Server from another device
   Serial.print("AP IP address: ");
@@ -34,6 +56,8 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/get", getCurrentLedColorInHEX);
   server.on("/set", setCurrentLedColorInHEX);
+  server.on("/wifi", wifi);
+  server.on("/changewifi", changeWifi);
   server.begin();
   Serial.println("HTTP server started");
 }
@@ -125,6 +149,59 @@ void handleRoot() {
 server.send(200, "text/html", html);
 }
 
+void wifi() {
+  String html = R"rawliteral(<!DOCTYPE html>
+<html lang="en">
+ 
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login and Password Form</title>
+</head>
+ 
+<body>
+ 
+    <h2>Update Credentials</h2>
+    <form id="credentialsForm">
+        <label for="newLogin">New login:</label>
+        <input type="text" id="newLogin" name="newLogin" required />
+        <br><br>
+        <label for="newPassword">New password:</label>
+        <input type="password" id="newPassword" name="newPassword" required />
+        <br><br>
+        <button type="submit">Submit</button>
+    </form>
+ 
+    <script>
+        const form = document.getElementById('credentialsForm');
+ 
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+ 
+            const newLogin = encodeURIComponent(document.getElementById('newLogin').value);
+            const newPassword = encodeURIComponent(document.getElementById('newPassword').value);
+ 
+            fetch(`http://192.168.4.1/changewifi?ssid=${newLogin}&password=${newPassword}`)
+                .then(response => response.text())
+                .then(data => {
+                    console.log('Response:', data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+        });
+    </script>
+ 
+</body>
+ 
+</html>)rawliteral";
+
+
+//server.serveStatic("/", SPIFFS, "/")
+   //   .setDefaultFile("index.html")
+     // .setCacheControl("max-age=31536000, immutable");
+server.send(200, "text/html", html);
+}
 
 void getCurrentLedColorInHEX(){  
     // Get color in HEX
@@ -132,6 +209,21 @@ void getCurrentLedColorInHEX(){
     sprintf(colorHex, "%02X%02X%02X", leds[0].r, leds[0].g, leds[0].b);
     String response = "#"+String(colorHex);
     server.send(200, "text/html", response);
+}
+
+void changeWifi(){  
+    // Get color in HEX
+   String newSsid = server.arg("ssid");
+  String newPass = server.arg("password");
+  if (newPass.length() < 8) {
+    server.send(400, "text/plain", "Password must be >= 8 chars");
+    return;
+  }
+
+  saveWifi(newSsid, newPass);
+  server.send(200, "text/plain", "Saved, rebooting...");
+  delay(500);
+  ESP.restart();
 }
 
 void setCurrentLedColorInHEX(){  
