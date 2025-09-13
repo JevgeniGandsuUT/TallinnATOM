@@ -1,11 +1,13 @@
 #include <WiFi.h>
 #include <WebServer.h>
+#include <DNSServer.h>
 #include <FastLED.h> 
 #include "SPIFFS.h"
 #include <Preferences.h>
 Preferences prefs;
 
-IPAddress IP;
+IPAddress apIP(192,168,4,1);  
+DNSServer dns;
 WebServer server(80);
 
 #define DATA_PIN 27    
@@ -48,27 +50,41 @@ void setup() {
   }
 
   WiFi.softAP(ssid.c_str(), pass.c_str());
-  
-  IP = WiFi.softAPIP(); // Needed IP adress to get to Server from another device
-  Serial.print("AP IP address: ");
-  Serial.println(IP);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255,255,255,0));
+
+  //IP = WiFi.softAPIP(); // Needed IP adress to get to Server from another device
+  //Serial.print("AP IP address: ");
+  //Serial.println(IP);
+
+  dns.start(53, "*", apIP);
 
   server.on("/", handleRoot);
   server.on("/get", getCurrentLedColorInHEX);
   server.on("/set", setCurrentLedColorInHEX);
   server.on("/wifi", wifi);
   server.on("/changewifi", changeWifi);
+  server.on("/generate_204", handleCaptivePortal);  // Для Android  
+  server.on("/hotspot-detect.html", handleCaptivePortal);  // Для Apple  
+  server.on("/connectivitycheck.gstatic.com", handleCaptivePortal);  // Для Android  
+  server.on("/captive.apple.com", handleCaptivePortal);  // Для Apple
+  server.onNotFound(handleCaptivePortal);  // Перенаправляем все остальные запросы
   server.begin();
   Serial.println("HTTP server started");
 }
 
+void handleCaptivePortal() {
+  // Перенаправляем все запросы на корневую страницу  
+  server.sendHeader("Location", "/", true);
+  server.send(302, "text/plain", "Redirecting to /");
+}
+ 
 void loop() {
   // put your main code here, to run repeatedly:
   // Handle incoming client requests
   server.handleClient();
 
-  Serial.println(IP);
-  delay(1000);
+
+
 }
 
 
