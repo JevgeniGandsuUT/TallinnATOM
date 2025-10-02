@@ -1,0 +1,51 @@
+name: Mark TESTED manually
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: 'Märkuse/viite lisainfo (nt testiplaan, ticket, keskkond)'
+        required: false
+        default: ''
+
+jobs:
+  mark-tested:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update README status to TESTED
+        env:
+          ACTOR: ${{ github.actor }}
+          NOTE: ${{ github.event.inputs.note }}
+        run: |
+          file="README.md"
+          if ! grep -q "<!--TEST_STATUS-->" "$file"; then
+            echo "Markerit ei leitud README-s. Lisa marker-plokk!"
+            exit 1
+          fi
+          ts="$(date -u +'%Y-%m-%d %H:%M:%SZ')"
+          line="<!--TEST_STATUS-->🟢 Status: TESTED (by ${ACTOR} at ${ts} UTC)<!--/TEST_STATUS-->"
+          if [ -n "$NOTE" ]; then
+            line="${line}  \n\n> ${NOTE}"
+          fi
+          # sed ei sobi siia kenasti (rea lõpp + lisainfo), kirjutame väikse skriptiga
+          awk -v repl="$line" '
+            {
+              if ($0 ~ /<!--TEST_STATUS-->/) { inblk=1; print repl; next }
+              if (inblk && $0 ~ /<!--\/TEST_STATUS-->/) { inblk=0; next }
+              if (!inblk) print
+            }
+          ' "$file" > README.tmp && mv README.tmp "$file"
+
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "Muudatusi pole."
+            exit 0
+          fi
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: mark TESTED by ${{ github.actor }}"
+          git push

@@ -1,0 +1,118 @@
+{
+  "base_url": "http://192.168.4.1",
+  "rates": [
+    10,
+    20,
+    50,
+    75,
+    100,
+    125,
+    150
+  ],
+  "step_duration_s": 5.0,
+  "thresholds": {
+    "latency_slow_ms": 500,
+    "max_err_rate": 0.05,
+    "max_miss_rate": 0.05
+  },
+  "steps": [
+    {
+      "rate_hz": 10,
+      "sent": 50,
+      "errors": 0,
+      "err_rate": 0.0,
+      "checked": 10,
+      "mismatches": 0,
+      "miss_rate": 0.0,
+      "slow": 0,
+      "slow_rate": 0.0,
+      "avg_latency_ms": 34.38,
+      "last_set": "4B6CB2"
+    },
+    {
+      "rate_hz": 20,
+      "sent": 100,
+      "errors": 0,
+      "err_rate": 0.0,
+      "checked": 20,
+      "mismatches": 0,
+      "miss_rate": 0.0,
+      "slow": 0,
+      "slow_rate": 0.0,
+      "avg_latency_ms": 33.89,
+      "last_set": "27FC54"
+    },
+    {
+      "rate_hz": 50,
+      "sent": 105,
+      "errors": 0,
+      "err_rate": 0.0,
+      "checked": 21,
+      "mismatches": 0,
+      "miss_rate": 0.0,
+      "slow": 0,
+      "slow_rate": 0.0,
+      "avg_latency_ms": 39.63,
+      "last_set": "AA6A4A"
+    },
+    {
+      "rate_hz": 75,
+      "sent": 132,
+      "errors": 0,
+      "err_rate": 0.0,
+      "checked": 27,
+      "mismatches": 0,
+      "miss_rate": 0.0,
+      "slow": 0,
+      "slow_rate": 0.0,
+      "avg_latency_ms": 29.69,
+      "last_set": "160CC5"
+    },
+    {
+      "rate_hz": 100,
+      "sent": 136,
+      "errors": 0,
+      "err_rate": 0.0,
+      "checked": 28,
+      "mismatches": 0,
+      "miss_rate": 0.0,
+      "slow": 0,
+      "slow_rate": 0.0,
+      "avg_latency_ms": 28.77,
+      "last_set": "4B7332"
+    },
+    {
+      "rate_hz": 125,
+      "sent": 131,
+      "errors": 0,
+      "err_rate": 0.0,
+      "checked": 27,
+      "mismatches": 0,
+      "miss_rate": 0.0,
+      "slow": 0,
+      "slow_rate": 0.0,
+      "avg_latency_ms": 30.57,
+      "last_set": "FA2CEA"
+    },
+    {
+      "rate_hz": 150,
+      "sent": 125,
+      "errors": 0,
+      "err_rate": 0.0,
+      "checked": 25,
+      "mismatches": 0,
+      "miss_rate": 0.0,
+      "slow": 0,
+      "slow_rate": 0.0,
+      "avg_latency_ms": 32.09,
+      "last_set": "39393B"
+    }
+  ],
+  "critical_point": null,
+  "recovery": {
+    "api_ok": true,
+    "stays_ok": true,
+    "set_ok": true,
+    "after_pause_s": 3.0
+  }
+}

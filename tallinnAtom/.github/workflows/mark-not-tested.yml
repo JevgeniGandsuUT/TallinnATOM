@@ -1,0 +1,35 @@
+name: Mark NOT TESTED on push
+
+on:
+  push:
+    branches: [ main, master ]  # kohanda
+
+jobs:
+  mark-not-tested:
+    if: github.actor != 'github-actions[bot]'  # väldi lõputut tsüklit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update README status to NOT TESTED
+        run: |
+          file="README.md"
+          if ! grep -q "<!--TEST_STATUS-->" "$file"; then
+            echo "Markerit ei leitud README-s. Lisa marker-plokk!"
+            exit 1
+          fi
+          # asenda markeriploki sisu
+          sed -i 's|<!--TEST_STATUS-->.*<!--/TEST_STATUS-->|<!--TEST_STATUS-->🔴 Status: NOT TESTED<!--/TEST_STATUS-->|' "$file"
+          echo "README uuendatud."
+
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "Muudatusi pole."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "ci: mark NOT TESTED [skip ci]"
+          git push
