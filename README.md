@@ -36,3 +36,5 @@ In VS Code, click the alien icon → PIO Project Tasks → your env (m5stack-ato
 Build Filesystem Image (bundles data/ into littlefs.bin)
 
 Upload Filesystem Image (flashes it to the ESP32)
+
+
