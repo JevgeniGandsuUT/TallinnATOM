@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Update Wi-Fi</title>
+</head>
+<body>
+  <h2>Update Credentials</h2>
+  <form id="credentialsForm">
+    <label for="newLogin">New SSID:</label>
+    <input type="text" id="newLogin" name="newLogin" required />
+    <br><br>
+    <label for="newPassword">New password:</label>
+    <input type="password" id="newPassword" name="newPassword" required minlength="8"/>
+    <br><br>
+    <button type="submit">Submit</button>
+  </form>
+
+  <pre id="out"></pre>
+
+  <script>
+    const out = document.getElementById('out');
+    document.getElementById('credentialsForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const ssid = encodeURIComponent(document.getElementById('newLogin').value);
+      const password = encodeURIComponent(document.getElementById('newPassword').value);
+      try {
+        const r = await fetch(`/changewifi?ssid=${ssid}&password=${password}`);
+        out.textContent = await r.text();
+      } catch (err) {
+        out.textContent = 'Error: ' + err;
+      }
+    });
+  </script>
+</body>
+</html>

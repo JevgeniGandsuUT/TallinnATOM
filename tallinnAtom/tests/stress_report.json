@@ -26,8 +26,8 @@
       "miss_rate": 0.0,
       "slow": 0,
       "slow_rate": 0.0,
-      "avg_latency_ms": 34.38,
-      "last_set": "4B6CB2"
+      "avg_latency_ms": 28.2,
+      "last_set": "9C59A6"
     },
     {
       "rate_hz": 20,
@@ -39,25 +39,25 @@
       "miss_rate": 0.0,
       "slow": 0,
       "slow_rate": 0.0,
-      "avg_latency_ms": 33.89,
-      "last_set": "27FC54"
+      "avg_latency_ms": 27.03,
+      "last_set": "3A6C1B"
     },
     {
       "rate_hz": 50,
-      "sent": 105,
-      "errors": 0,
-      "err_rate": 0.0,
-      "checked": 21,
+      "sent": 112,
+      "errors": 1,
+      "err_rate": 0.0089,
+      "checked": 23,
       "mismatches": 0,
       "miss_rate": 0.0,
       "slow": 0,
       "slow_rate": 0.0,
-      "avg_latency_ms": 39.63,
-      "last_set": "AA6A4A"
+      "avg_latency_ms": 31.28,
+      "last_set": "B5BF34"
     },
     {
       "rate_hz": 75,
-      "sent": 132,
+      "sent": 135,
       "errors": 0,
       "err_rate": 0.0,
       "checked": 27,
@@ -65,8 +65,8 @@
       "miss_rate": 0.0,
       "slow": 0,
       "slow_rate": 0.0,
-      "avg_latency_ms": 29.69,
-      "last_set": "160CC5"
+      "avg_latency_ms": 30.23,
+      "last_set": "5F86FE"
     },
     {
       "rate_hz": 100,
@@ -78,12 +78,12 @@
       "miss_rate": 0.0,
       "slow": 0,
       "slow_rate": 0.0,
-      "avg_latency_ms": 28.77,
-      "last_set": "4B7332"
+      "avg_latency_ms": 30.45,
+      "last_set": "CBEE74"
     },
     {
       "rate_hz": 125,
-      "sent": 131,
+      "sent": 135,
       "errors": 0,
       "err_rate": 0.0,
       "checked": 27,
@@ -91,21 +91,21 @@
       "miss_rate": 0.0,
       "slow": 0,
       "slow_rate": 0.0,
-      "avg_latency_ms": 30.57,
-      "last_set": "FA2CEA"
+      "avg_latency_ms": 31.14,
+      "last_set": "D7765C"
     },
     {
       "rate_hz": 150,
-      "sent": 125,
+      "sent": 133,
       "errors": 0,
       "err_rate": 0.0,
-      "checked": 25,
+      "checked": 27,
       "mismatches": 0,
       "miss_rate": 0.0,
       "slow": 0,
       "slow_rate": 0.0,
-      "avg_latency_ms": 32.09,
-      "last_set": "39393B"
+      "avg_latency_ms": 31.1,
+      "last_set": "D7DFAB"
     }
   ],
   "critical_point": null,

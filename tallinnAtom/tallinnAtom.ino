@@ -2,22 +2,59 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <FastLED.h>
-#include "SPIFFS.h"
+#include <LittleFS.h>
 #include <Preferences.h>
 
+// =================== Configuration =====================
+
+constexpr uint8_t  DATA_PIN       = 27;
+constexpr uint8_t  NUM_LEDS       = 1;
+constexpr char     DEFAULT_SSID[] = "TallinnAtom";
+constexpr char     DEFAULT_PASS[] = "12345678";
+
+IPAddress  apIP(192, 168, 4, 1);
+DNSServer  dns;
+WebServer  server(80);
 Preferences prefs;
-
-IPAddress apIP(192,168,4,1);
-DNSServer dns;
-WebServer server(80);
-
-#define DATA_PIN 27
-#define NUM_LEDS 1
 CRGB leds[NUM_LEDS];
 
-// -------- Wi-Fi creds (Preferences: "wifi") ----------
+// UI prefs
+int optimalHz = 10;  // Default value if nothing stored
+
+// =================== Forward Declarations ===============
+
+// Wi-Fi creds (Preferences: namespace "wifi")
+void saveWifi(const String& ssid, const String& pass);
+void loadWifi(String& ssid, String& pass);
+
+// UI optimal Hz (Preferences: namespace "ui" -> key "opt_hz")
+void saveOptimalHz(int hz);
+void loadOptimalHz(int& hz);
+
+// Static file serving (LittleFS)
+String contentType(const String& path);
+bool   streamFromFS(const String& path);
+void   handleFileRequest();
+
+// Captive portal helpers
+void   handleCaptivePortalRedirect();
+bool   isApiPath(const String& uri);
+
+// API handlers
+void getCurrentLedColorInHEX();
+void setCurrentLedColorInHEX();
+void getOptimalHzHandler();
+void setOptimalHzHandler();
+void changeWifi();
+
+// Setup helpers
+void setupAccessPoint();
+void registerRoutes();
+
+// =================== Preferences: Wi-Fi =================
+
 void saveWifi(const String& ssid, const String& pass) {
-  prefs.begin("wifi", false);    // namespace "wifi"
+  prefs.begin("wifi", false);
   prefs.putString("ssid", ssid);
   prefs.putString("pass", pass);
   prefs.end();
@@ -30,8 +67,7 @@ void loadWifi(String& ssid, String& pass) {
   prefs.end();
 }
 
-// -------- Optimal Hz (Preferences: "ui" -> opt_hz) ---
-int optimalHz = 10; // дефолт, если ещё не сохранено
+// =================== Preferences: UI Hz =================
 
 void saveOptimalHz(int hz) {
   prefs.begin("ui", false);
@@ -39,339 +75,100 @@ void saveOptimalHz(int hz) {
   prefs.end();
 }
 
-void loadOptimalHz(int &hz) {
+void loadOptimalHz(int& hz) {
   prefs.begin("ui", true);
   hz = prefs.getInt("opt_hz", 10);
   prefs.end();
 }
 
-// --------- handlers forward declarations --------------
-void handleRoot();
-void getCurrentLedColorInHEX();
-void setCurrentLedColorInHEX();
-void wifi();
-void changeWifi();
-void handleCaptivePortal();
-void getOptimalHzHandler();
-void setOptimalHzHandler();
+// =================== LittleFS / Static Files ============
 
-void setup() {
-  Serial.begin(9600);
-  Serial.print("Setting as access point ");
-
-  FastLED.addLeds<WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);
-  leds[0] = CRGB::Red;
-  FastLED.show();
-
-  WiFi.mode(WIFI_AP);
-
-  String ssid, pass;
-  loadWifi(ssid, pass);
-  if (ssid == "") {
-    ssid = "TallinnAtom";
-    pass = "12345678";
-  }
-
-  WiFi.softAP(ssid.c_str(), pass.c_str());
-  WiFi.softAPConfig(apIP, apIP, IPAddress(255,255,255,0));
-
-  //IP = WiFi.softAPIP();
-  //Serial.print("AP IP address: ");
-  //Serial.println(IP);
-
-  dns.start(53, "*", apIP);
-
-  // Прочитать сохранённый optimal Hz
-  loadOptimalHz(optimalHz);
-  Serial.print("Optimal Hz loaded: ");
-  Serial.println(optimalHz);
-
-  server.on("/", handleRoot);
-  server.on("/get", getCurrentLedColorInHEX);
-  server.on("/set", setCurrentLedColorInHEX);
-  server.on("/wifi", wifi);
-  server.on("/changewifi", changeWifi);
-  server.on("/getoptimal", getOptimalHzHandler);
-  server.on("/setoptimal", setOptimalHzHandler);
-  server.on("/generate_204", handleCaptivePortal);           // Android
-  server.on("/hotspot-detect.html", handleCaptivePortal);    // Apple
-  server.on("/connectivitycheck.gstatic.com", handleCaptivePortal); // Android
-  server.on("/captive.apple.com", handleCaptivePortal);      // Apple
-  server.onNotFound(handleCaptivePortal);                    // редиректим всё остальное
-  server.begin();
-  Serial.println("HTTP server started");
+String contentType(const String& path) {
+  if (path.endsWith(".html") || path.endsWith(".htm")) return "text/html";
+  if (path.endsWith(".css"))  return "text/css";
+  if (path.endsWith(".js"))   return "application/javascript";
+  if (path.endsWith(".png"))  return "image/png";
+  if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+  if (path.endsWith(".ico"))  return "image/x-icon";
+  if (path.endsWith(".svg"))  return "image/svg+xml";
+  if (path.endsWith(".json")) return "application/json";
+  return "text/plain";
 }
 
-void handleCaptivePortal() {
-  // Перенаправляем все запросы на корневую страницу
+bool streamFromFS(const String& inPath) {
+  String path = inPath;
+  // Map folder requests to index.html
+  if (path.endsWith("/")) path += "index.html";
+  if (!LittleFS.exists(path)) return false;
+
+  File f = LittleFS.open(path, "r");
+  if (!f) return false;
+
+  server.streamFile(f, contentType(path));
+  f.close();
+  return true;
+}
+
+void handleFileRequest() {
+  const String path = server.uri();
+  if (!streamFromFS(path)) {
+    server.send(404, "text/plain", "Not found");
+  }
+}
+
+// =================== Captive Portal =====================
+
+void handleCaptivePortalRedirect() {
+  // For unknown paths (or OS captive checks), push client to root
   server.sendHeader("Location", "/", true);
   server.send(302, "text/plain", "Redirecting to /");
 }
 
-void loop() {
-  // Handle incoming client requests
-  server.handleClient();
+bool isApiPath(const String& u) {
+  return u.startsWith("/get")
+      || u.startsWith("/set")
+      || u.startsWith("/change")     // matches /changewifi
+      || u.startsWith("/getoptimal")
+      || u.startsWith("/setoptimal")
+      || u.startsWith("/generate_204")
+      || u.startsWith("/hotspot-detect.html")
+      || u.startsWith("/connectivitycheck.gstatic.com")
+      || u.startsWith("/captive.apple.com");
 }
 
-// ------------------- UI: index ------------------------
-void handleRoot() {
-  String html = R"rawliteral(<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LED Controller</title>
-  <style>
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: #0d1117;
-      color: #e6edf3;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
-    }
-    .container {
-      background: #161b22;
-      padding: 30px;
-      border-radius: 16px;
-      box-shadow: 0 0 20px rgba(0, 255, 200, 0.3);
-      text-align: center;
-      max-width: 420px;
-      width: 100%;
-    }
-    h1 {
-      font-size: 28px;
-      margin-bottom: 25px;
-      color: #58a6ff;
-      text-shadow: 0 0 10px rgba(88,166,255,0.6);
-    }
-    label {
-      font-size: 18px;
-      margin-bottom: 15px;
-      display: block;
-      color: #79c0ff;
-    }
-    input[type="color"] {
-      -webkit-appearance: none;
-      border: none;
-      width: 90px;
-      height: 90px;
-      border-radius: 50%;
-      cursor: pointer;
-      padding: 0;
-      box-shadow: 0 0 15px rgba(0,255,200,0.5);
-      overflow: hidden;
-    }
-    input[type="color"]::-webkit-color-swatch-wrapper {
-      padding: 0;
-      border-radius: 50%;
-    }
-    input[type="color"]::-webkit-color-swatch {
-      border: none;
-      border-radius: 50%;
-    }
-    button {
-      margin-top: 20px;
-      background: linear-gradient(90deg, #0ea5e9, #14b8a6);
-      color: #fff;
-      border: none;
-      padding: 12px 25px;
-      border-radius: 25px;
-      font-size: 16px;
-      font-weight: bold;
-      cursor: pointer;
-      transition: all 0.3s ease;
-    }
-    button:hover {
-      background: linear-gradient(90deg, #38bdf8, #2dd4bf);
-      transform: scale(1.05);
-      box-shadow: 0 0 12px rgba(56,189,248,0.7);
-    }
-    .color-preview {
-      margin-top: 25px;
-      font-size: 18px;
-      font-weight: bold;
-      color: #a5d6ff;
-    }
-    .color-circle {
-      display: inline-block;
-      width: 60px;
-      height: 60px;
-      border-radius: 50%;
-      border: 2px solid #333;
-      margin-left: 12px;
-      vertical-align: middle;
-      box-shadow: 0 0 10px rgba(255,255,255,0.2);
-      transition: background-color 0.6s ease, box-shadow 0.6s ease;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>LED Controller</h1>
-    <label for="colorPicker">Choose a color:</label>
-    <input type="color" id="colorPicker" />
-    <br>
-    <button id="getButton">Get current color</button>
-    <div class="color-preview">
-      Current color: <span id="currentColorText">#000000</span>
-      <span class="color-circle" id="currentColorBox"></span>
-    </div>
-  </div>
+// =================== API: LED Color =====================
 
-  <script>
-    const colorInput = document.getElementById('colorPicker');
-    const getButton = document.getElementById('getButton');
-    const currentColorText = document.getElementById('currentColorText');
-    const currentColorBox = document.getElementById('currentColorBox');
-
-    let currentColor;
-
-    const getCurrentColor = () => {
-      fetch('http://192.168.4.1/get')
-        .then(response => response.text())
-        .then(data => {
-          currentColor = data;
-          colorInput.value = currentColor;
-          currentColorText.textContent = currentColor;
-          currentColorBox.style.backgroundColor = currentColor;
-          currentColorBox.style.boxShadow = `0 0 20px ${currentColor}`;
-        })
-        .catch(error => {
-          console.error('Error while fetching:', error);
-        });
-    }
-
-    window.onload = function () {
-      getCurrentColor();
-    }
-
-    getButton.addEventListener('click', () => {
-      fetch('http://192.168.4.1/get')
-        .then(response => response.text())
-        .then(data => {
-          console.log('Response from server:', data);
-          currentColorText.textContent = data;
-          currentColorBox.style.backgroundColor = data;
-          currentColorBox.style.boxShadow = `0 0 20px ${data}`;
-        })
-        .catch(error => {
-          console.error('Error while fetching:', error);
-        });
-    });
-
-    colorInput.addEventListener('change', () => {
-      let selectedColor = colorInput.value;
-      selectedColor = selectedColor.replace('#', '');
-      console.log('Selected color:', selectedColor)
-      fetch(`http://192.168.4.1/set?value=${selectedColor}`)
-        .then(response => response.text())
-        .then(data => {
-          console.log('Response from server:', data);
-          currentColorText.textContent = data;
-          currentColorBox.style.backgroundColor = data;
-          currentColorBox.style.boxShadow = `0 0 20px ${data}`;
-        })
-        .catch(error => {
-          console.error('Error while sending color:', error);
-        });
-    });
-  </script>
-</body>
-</html>
-)rawliteral";
-
-  server.send(200, "text/html", html);
+void getCurrentLedColorInHEX() {
+  char colorHex[8]; // "#RRGGBB" + '\0'
+  sprintf(colorHex, "#%02X%02X%02X", leds[0].r, leds[0].g, leds[0].b);
+  server.send(200, "text/plain", colorHex);
 }
 
-// ------------------- Wi-Fi page -----------------------
-void wifi() {
-  String html = R"rawliteral(<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Login and Password Form</title>
-</head>
-<body>
-  <h2>Update Credentials</h2>
-  <form id="credentialsForm">
-      <label for="newLogin">New login:</label>
-      <input type="text" id="newLogin" name="newLogin" required />
-      <br><br>
-      <label for="newPassword">New password:</label>
-      <input type="password" id="newPassword" name="newPassword" required />
-      <br><br>
-      <button type="submit">Submit</button>
-  </form>
+void setCurrentLedColorInHEX() {
+  // Accepts "#RRGGBB" or "RRGGBB"
+  String incomingHex = server.arg("value");
+  if (incomingHex.startsWith("#")) incomingHex = incomingHex.substring(1);
 
-  <script>
-    const form = document.getElementById('credentialsForm');
-    form.addEventListener('submit', function (event) {
-      event.preventDefault();
-      const newLogin = encodeURIComponent(document.getElementById('newLogin').value);
-      const newPassword = encodeURIComponent(document.getElementById('newPassword').value);
-      fetch(`http://192.168.4.1/changewifi?ssid=${newLogin}&password=${newPassword}`)
-        .then(response => response.text())
-        .then(data => { console.log('Response:', data); })
-        .catch(error => { console.error('Error:', error); });
-    });
-  </script>
-</body>
-</html>)rawliteral";
-
-  server.send(200, "text/html", html);
-}
-
-// ------------------- API: get color -------------------
-void getCurrentLedColorInHEX(){
-  char colorHex[7];
-  sprintf(colorHex, "%02X%02X%02X", leds[0].r, leds[0].g, leds[0].b);
-  String response = "#" + String(colorHex);
-  server.send(200, "text/html", response);
-}
-
-// ------------------- API: change Wi-Fi ----------------
-void changeWifi(){
-  String newSsid = server.arg("ssid");
-  String newPass = server.arg("password");
-  if (newPass.length() < 8) {
-    server.send(400, "text/plain", "Password must be >= 8 chars");
+  if (incomingHex.length() != 6) {
+    server.send(400, "text/plain", "Invalid HEX format");
     return;
   }
-  saveWifi(newSsid, newPass);
-  server.send(200, "text/plain", "Saved, rebooting...");
-  delay(500);
-  ESP.restart();
+
+  long number = strtol(incomingHex.c_str(), nullptr, 16);
+  uint8_t r = (number >> 16) & 0xFF;
+  uint8_t g = (number >>  8) & 0xFF;
+  uint8_t b =  number        & 0xFF;
+
+  leds[0] = CRGB(r, g, b);
+  FastLED.show();
+
+  char colorHex[8];
+  sprintf(colorHex, "#%02X%02X%02X", r, g, b);
+  server.send(200, "text/plain", colorHex);
 }
 
-// ------------------- API: set color -------------------
-void setCurrentLedColorInHEX(){
-  String incomingHex = server.arg("value");  // "#FF00FF" или "FF00FF"
-  if (incomingHex.startsWith("#")) {
-    incomingHex = incomingHex.substring(1);
-  }
+// =================== API: Optimal Hz ====================
 
-  if (incomingHex.length() == 6) {
-    long number = strtol(incomingHex.c_str(), NULL, 16);
-    byte r = (number >> 16) & 0xFF;
-    byte g = (number >> 8) & 0xFF;
-    byte b = number & 0xFF;
-
-    leds[0] = CRGB(r, g, b);
-    FastLED.show();
-
-    char colorHex[8];
-    sprintf(colorHex, "#%02X%02X%02X", r, g, b);
-    server.send(200, "text/html", colorHex);
-  } else {
-    server.send(400, "text/html", "Invalid HEX format");
-  }
-}
-
-// --------------- API: optimal Hz (get/set) ------------
 void getOptimalHzHandler() {
   server.send(200, "text/plain", String(optimalHz));
 }
@@ -381,8 +178,7 @@ void setOptimalHzHandler() {
     server.send(400, "text/plain", "Missing 'hz' param");
     return;
   }
-  String hzStr = server.arg("hz");
-  int hz = hzStr.toInt();
+  const int hz = server.arg("hz").toInt();
   if (hz < 1 || hz > 200) {
     server.send(400, "text/plain", "hz must be between 1 and 200");
     return;
@@ -390,4 +186,114 @@ void setOptimalHzHandler() {
   optimalHz = hz;
   saveOptimalHz(optimalHz);
   server.send(200, "text/plain", String(optimalHz));
+}
+
+// =================== API: Wi-Fi Change ==================
+
+void changeWifi() {
+  const String newSsid = server.arg("ssid");
+  const String newPass = server.arg("password");
+
+  if (newSsid.isEmpty()) {
+    server.send(400, "text/plain", "SSID must not be empty");
+    return;
+  }
+  if (newPass.length() < 8) {
+    server.send(400, "text/plain", "Password must be >= 8 chars");
+    return;
+  }
+
+  saveWifi(newSsid, newPass);
+  server.send(200, "text/plain", "Saved, rebooting...");
+  delay(500);
+  ESP.restart();
+}
+
+// =================== Setup Helpers ======================
+
+void setupAccessPoint() {
+  WiFi.mode(WIFI_AP);
+
+  String ssid, pass;
+  loadWifi(ssid, pass);
+  if (ssid.isEmpty()) {
+    ssid = DEFAULT_SSID;
+    pass = DEFAULT_PASS;
+  }
+
+  // IMPORTANT: set AP IP before enabling SoftAP
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+  WiFi.softAP(ssid.c_str(), pass.c_str());
+
+  // DNS to catch all hostnames and point them to AP IP
+  dns.start(53, "*", apIP);
+}
+
+void registerRoutes() {
+  // --- Static files from LittleFS ---
+  server.on("/", HTTP_GET, handleFileRequest);      // serves /index.html by default
+  server.on("/index.html", HTTP_GET, handleFileRequest);
+  server.on("/wifi.html",   HTTP_GET, handleFileRequest);
+
+  // Universal static / captive handler for "not found"
+  server.onNotFound([]() {
+    const String u = server.uri();
+    if (isApiPath(u)) {
+      // For captive probes or unexpected API-like paths -> redirect to root
+      handleCaptivePortalRedirect();
+      return;
+    }
+    // Otherwise try to serve from FS; if missing -> redirect to root
+    if (!streamFromFS(u)) handleCaptivePortalRedirect();
+  });
+
+  // --- APIs ---
+  server.on("/get",         HTTP_GET, getCurrentLedColorInHEX);
+  server.on("/set",         HTTP_GET, setCurrentLedColorInHEX);
+  server.on("/changewifi",  HTTP_GET, changeWifi);
+  server.on("/getoptimal",  HTTP_GET, getOptimalHzHandler);
+  server.on("/setoptimal",  HTTP_GET, setOptimalHzHandler);
+
+  // --- Captive-portal well-known endpoints ---
+  server.on("/generate_204", []() { server.send(204); });                    // Android
+  server.on("/hotspot-detect.html", []() { server.send(200, "text/html", "OK"); }); // Apple
+  server.on("/connectivitycheck.gstatic.com", handleCaptivePortalRedirect);
+  server.on("/captive.apple.com",             handleCaptivePortalRedirect);
+}
+
+// =================== Arduino Setup/Loop =================
+
+void setup() {
+  Serial.begin(115200);
+
+  // LED init (turn the pixel red by default)
+  FastLED.addLeds<WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);
+  leds[0] = CRGB::Red;
+  FastLED.show();
+
+  // Mount filesystem (format if mount fails)
+  if (!LittleFS.begin(true)) {
+    Serial.println("LittleFS mount failed");
+  }
+
+  // Load UI prefs
+  loadOptimalHz(optimalHz);
+  Serial.printf("Optimal Hz loaded: %d\n", optimalHz);
+
+  // Bring up AP + DNS
+  setupAccessPoint();
+
+  // HTTP routes
+  registerRoutes();
+
+  server.begin();
+  Serial.println("HTTP server started");
+}
+
+void loop() {
+  // Process DNS requests for captive portal
+  dns.processNextRequest();
+
+  // Process HTTP requests
+  server.handleClient();
 }
