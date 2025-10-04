@@ -1,13 +1,10 @@
 """
-stress.py – ESP32 ülekoormuse ja stabiilsuse test.
+ESP32 overload test: ramp Hz until failure; stop on first errors.
 
-- Eskaleeruv koormustest: alustab 10 SET käsuga sekundis,
-  suurendab järk-järgult 20, 50, 75, 100, 125, 150 käsuni sekundis.
-- Mõõdab vastuse aegu ja kontrollib GET kaudu, kas värvid reaalselt jõuavad LED-ile.
-- Märgib kriitilise punkti, kus latentsus > 500ms või hakkavad käsud kaduma.
-- Taastumistest: peatame koormuse, ootame ja kontrollime,
-  kas seade taastub ja viimane värv püsib.
-- Lõpus salvestab raporti stress_report.json.
+- Steps through RATES (Hz), sending random RGB via /set and periodically verifying /get.
+- Stops immediately when any errors appear on a step (HTTP != 200, exceptions, etc.).
+- Tracks max_safe_rate_hz: last step with ZERO errors/mismatches and avg latency <= LATENCY_SLOW_MS.
+- Saves stress_report.json with details.
 """
 
 import os
@@ -16,20 +13,20 @@ import json
 import random
 import requests
 
-# --- Seadistatavad parameetrid ---
+# -------- Config --------
 BASE_URL = os.getenv("BASE_URL", "http://192.168.4.1")
-RATES = [10, 20, 50, 75, 100, 125, 150]  # käske sekundis
-STEP_DURATION = float(os.getenv("STEP_DURATION", "5"))  # sek igal tasemel
-SAMPLE_EVERY = int(os.getenv("SAMPLE_EVERY", "5"))      # iga N-set kontrollime GET-iga
+RATES = [10, 20, 50, 75, 100, 125, 150]  # extend if needed
+STEP_DURATION = float(os.getenv("STEP_DURATION", "5"))
+SAMPLE_EVERY = int(os.getenv("SAMPLE_EVERY", "5"))
 LATENCY_SLOW_MS = int(os.getenv("LATENCY_SLOW_MS", "500"))
-MAX_ERR_RATE = float(os.getenv("MAX_ERR_RATE", "0.05"))  # 5% errorid
-MAX_MISS_RATE = float(os.getenv("MAX_MISS_RATE", "0.05"))# 5% missid
-RECOVERY_PAUSE = float(os.getenv("RECOVERY_PAUSE", "3.0"))
+RECOVERY_PAUSE = float(os.getenv("RECOVERY_PAUSE", "2.0"))
 
-
+# -------- Helpers --------
 def _hex6():
     return f"{random.randint(0, 0xFFFFFF):06X}"
 
+def _hash(hex_no_hash: str) -> str:
+    return "#" + hex_no_hash.upper()
 
 def set_color(session, hex_no_hash, timeout=1.5):
     t0 = time.perf_counter()
@@ -37,29 +34,20 @@ def set_color(session, hex_no_hash, timeout=1.5):
     dt = (time.perf_counter() - t0) * 1000.0
     return r.status_code, r.text.strip(), dt
 
-
 def get_color(session, timeout=1.0):
     t0 = time.perf_counter()
     r = session.get(f"{BASE_URL}/get", timeout=timeout)
     dt = (time.perf_counter() - t0) * 1000.0
     return r.status_code, r.text.strip(), dt
 
-
-def _norm_hash(hex_no_hash: str) -> str:
-    return "#" + hex_no_hash.upper()
-
-
 def run_step(session, rate_hz, duration_s):
-    """Jookseb ühe koormuse astme."""
+    """Run one step; returns (metrics, has_errors)."""
     interval = 1.0 / rate_hz
     t_end = time.perf_counter() + duration_s
     next_tick = time.perf_counter()
-    sent = 0
-    errors = 0
-    slow = 0
+
+    sent = errors = slow = checked = mismatches = 0
     latencies = []
-    checked = 0
-    mismatches = 0
     last_set = None
 
     while time.perf_counter() < t_end:
@@ -73,69 +61,70 @@ def run_step(session, rate_hz, duration_s):
             else:
                 if code != 200:
                     errors += 1
-                if dt_ms > LATENCY_SLOW_MS:
-                    slow += 1
-                latencies.append(dt_ms)
-                last_set = hex6
-                # perioodiline kontroll
-                if sent % SAMPLE_EVERY == 0:
-                    try:
-                        gcode, gbody, _ = get_color(session)
-                        if gcode == 200:
-                            checked += 1
-                            if gbody.upper() != _norm_hash(hex6).upper():
-                                mismatches += 1
-                        else:
+                else:
+                    if dt_ms > LATENCY_SLOW_MS:
+                        slow += 1
+                    latencies.append(dt_ms)
+                    last_set = hex6
+
+                    # periodic GET verification
+                    if sent % SAMPLE_EVERY == 0:
+                        try:
+                            gcode, gbody, _ = get_color(session)
+                            if gcode == 200:
+                                checked += 1
+                                if gbody.upper() != _hash(hex6).upper():
+                                    mismatches += 1
+                            else:
+                                errors += 1
+                        except Exception:
                             errors += 1
-                    except Exception:
-                        errors += 1
+
             sent += 1
             next_tick += interval
+
+        # tiny sleep to reduce busy-waiting
         time.sleep(min(0.0015, interval * 0.2))
 
     avg_lat = sum(latencies) / len(latencies) if latencies else 0.0
-    err_rate = errors / sent if sent else 1.0
-    miss_rate = mismatches / checked if checked else 0.0
-    slow_rate = slow / sent if sent else 0.0
 
     metrics = {
         "rate_hz": rate_hz,
         "sent": sent,
         "errors": errors,
-        "err_rate": round(err_rate, 4),
         "checked": checked,
         "mismatches": mismatches,
-        "miss_rate": round(miss_rate, 4),
         "slow": slow,
-        "slow_rate": round(slow_rate, 4),
         "avg_latency_ms": round(avg_lat, 2),
         "last_set": last_set,
     }
 
-    unstable = (
-        err_rate > MAX_ERR_RATE
-        or miss_rate > MAX_MISS_RATE
-        or avg_lat > LATENCY_SLOW_MS
-    )
-
-    return metrics, unstable
-
+    has_errors = errors > 0  # stop condition as requested
+    return metrics, has_errors
 
 def recovery_check(session, last_color):
     time.sleep(RECOVERY_PAUSE)
-    gcode, gbody, _ = get_color(session)
-    api_ok = (gcode == 200)
+    try:
+        gcode, gbody, _ = get_color(session)
+        api_ok = (gcode == 200)
+    except Exception:
+        api_ok = False
+        gbody = None
+
     stays_ok = None
-    if last_color and api_ok:
-        stays_ok = (gbody.upper() == _norm_hash(last_color).upper())
+    if api_ok and last_color:
+        stays_ok = (gbody or "").upper() == _hash(last_color).upper()
+
+    # quick sanity set after recovery pause
     new_hex = _hex6()
     try:
         scode, _, _ = set_color(session, new_hex)
         time.sleep(0.05)
         g2code, g2body, _ = get_color(session)
-        set_ok = (scode == 200 and g2code == 200 and g2body.upper() == _norm_hash(new_hex).upper())
+        set_ok = (scode == 200 and g2code == 200 and (g2body or "").upper() == _hash(new_hex).upper())
     except Exception:
         set_ok = False
+
     return {
         "api_ok": api_ok,
         "stays_ok": stays_ok,
@@ -143,54 +132,60 @@ def recovery_check(session, last_color):
         "after_pause_s": RECOVERY_PAUSE,
     }
 
-
 def main():
     session = requests.Session()
     report = {
         "base_url": BASE_URL,
         "rates": RATES,
         "step_duration_s": STEP_DURATION,
-        "thresholds": {
-            "latency_slow_ms": LATENCY_SLOW_MS,
-            "max_err_rate": MAX_ERR_RATE,
-            "max_miss_rate": MAX_MISS_RATE,
-        },
+        "thresholds": {"latency_slow_ms": LATENCY_SLOW_MS},
         "steps": [],
         "critical_point": None,
+        "max_safe_rate_hz": None,
         "recovery": None,
+        "stop_reason": None,
     }
 
-    print(f"\n=== ESP32 stress & stability test ===")
+    print("\n=== ESP32 Overload Test (stop on first errors) ===")
     print(f"Target: {BASE_URL}")
-    print(f"Rates: {RATES} Hz, step {STEP_DURATION}s")
+    print(f"Rates: {RATES} Hz, step {STEP_DURATION}s, latency limit {LATENCY_SLOW_MS} ms\n")
+
+    max_safe = None
     last_color = None
+
     for rate in RATES:
-        metrics, unstable = run_step(session, rate, STEP_DURATION)
+        metrics, has_errors = run_step(session, rate, STEP_DURATION)
         report["steps"].append(metrics)
         last_color = metrics.get("last_set") or last_color
+
+        # safe iff no errors, no mismatches, and latency acceptable
+        safe = (metrics["errors"] == 0 and metrics["mismatches"] == 0 and metrics["avg_latency_ms"] <= LATENCY_SLOW_MS)
+        if safe:
+            max_safe = rate
+
         print(
-            f"[{rate} Hz] sent={metrics['sent']} "
-            f"errors={metrics['errors']} ({metrics['err_rate']*100:.1f}%) "
-            f"mism={metrics['mismatches']} ({metrics['miss_rate']*100:.1f}%) "
+            f"[{rate:>3} Hz] sent={metrics['sent']} "
+            f"errors={metrics['errors']} "
+            f"mismatches={metrics['mismatches']} "
             f"avg={metrics['avg_latency_ms']}ms slow={metrics['slow']}"
         )
-        if unstable and report["critical_point"] is None:
-            report["critical_point"] = {
-                "rate_hz": rate,
-                "metrics": metrics,
-            }
-            print(f"⚠️ Critical point reached at {rate} Hz")
+
+        if has_errors:
+            report["critical_point"] = {"rate_hz": rate, "metrics": metrics}
+            report["stop_reason"] = f"errors_detected_at_{rate}_hz"
+            print(f"!! Stopping: errors detected at {rate} Hz")
             break
 
+    report["max_safe_rate_hz"] = max_safe
+
+    print(f"\nMax safe rate (no errors/mismatches, latency OK): {max_safe} Hz")
     print("\n=== Recovery check ===")
-    rec = recovery_check(session, last_color)
-    report["recovery"] = rec
-    print(f"API OK: {rec['api_ok']} | stays: {rec['stays_ok']} | set_ok: {rec['set_ok']}")
+    report["recovery"] = recovery_check(session, last_color)
+    print(f"API OK: {report['recovery']['api_ok']} | stays: {report['recovery']['stays_ok']} | new SET ok: {report['recovery']['set_ok']}")
 
     with open("stress_report.json", "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
-    print("Report saved -> stress_report.json")
-
+    print("\nReport saved -> stress_report.json")
 
 if __name__ == "__main__":
     try:

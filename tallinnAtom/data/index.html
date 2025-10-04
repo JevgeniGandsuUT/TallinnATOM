@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LED Controller</title>
   <style>
-    /* ваш стиль без изменений */
     body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
     .container{background:#161b22;padding:30px;border-radius:16px;box-shadow:0 0 20px rgba(0,255,200,.3);text-align:center;max-width:420px;width:100%}
     h1{font-size:28px;margin-bottom:25px;color:#58a6ff;text-shadow:0 0 10px rgba(88,166,255,.6)}
@@ -17,6 +16,7 @@
     button:hover{background:linear-gradient(90deg,#38bdf8,#2dd4bf);transform:scale(1.05);box-shadow:0 0 12px rgba(56,189,248,.7)}
     .color-preview{margin-top:25px;font-size:18px;font-weight:bold;color:#a5d6ff}
     .color-circle{display:inline-block;width:60px;height:60px;border-radius:50%;border:2px solid #333;margin-left:12px;vertical-align:middle;box-shadow:0 0 10px rgba(255,255,255,.2);transition:background-color .6s,box-shadow .6s}
+    .hz-label{opacity:.8;font-size:12px;margin-top:8px}
   </style>
 </head>
 <body>
@@ -24,6 +24,7 @@
     <h1>LED Controller</h1>
     <label for="colorPicker">Choose a color:</label>
     <input type="color" id="colorPicker" />
+    <div class="hz-label" id="hzInfo">optimalHz: …</div>
     <br>
     <button id="getButton">Get current color</button>
     <div class="color-preview">
@@ -37,34 +38,97 @@
     const getButton = document.getElementById('getButton');
     const currentColorText = document.getElementById('currentColorText');
     const currentColorBox = document.getElementById('currentColorBox');
+    const hzInfo = document.getElementById('hzInfo');
 
-    const getCurrentColor = () => {
-      fetch('/get')
+    // Rate limiting state
+    let optimalHz = 10;
+    let minIntervalMs = 1000 / optimalHz;
+    let lastSentAt = 0;
+    let pendingHex = null;
+    let pendingTimer = null;
+
+    function applyHz(hz) {
+      optimalHz = Math.max(1, Math.min(200, Number(hz) || 10));
+      minIntervalMs = 1000 / optimalHz;
+      hzInfo.textContent = `optimalHz: ${optimalHz} (min interval ${Math.round(minIntervalMs)} ms)`;
+    }
+
+    async function fetchOptimalHz() {
+      try {
+        const r = await fetch('/getoptimal');
+        const txt = await r.text();
+        applyHz(txt.trim());
+      } catch (e) {
+        console.error('Failed to get optimal Hz, using default 10', e);
+        applyHz(10);
+      }
+    }
+
+    function updatePreview(hexWithHash) {
+      colorInput.value = hexWithHash;
+      currentColorText.textContent = hexWithHash;
+      currentColorBox.style.backgroundColor = hexWithHash;
+      currentColorBox.style.boxShadow = `0 0 20px ${hexWithHash}`;
+    }
+
+    async function getCurrentColor() {
+      try {
+        const hex = await (await fetch('/get')).text();
+        updatePreview(hex);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function sendColorNow(hexNoHash) {
+      fetch(`/set?value=${hexNoHash}`)
         .then(r => r.text())
-        .then(hex => {
-          colorInput.value = hex;
-          currentColorText.textContent = hex;
-          currentColorBox.style.backgroundColor = hex;
-          currentColorBox.style.boxShadow = `0 0 20px ${hex}`;
-        })
+        .then(updatePreview)
         .catch(console.error);
-    };
+      lastSentAt = Date.now();
+    }
 
-    window.onload = getCurrentColor;
+    function scheduleSend(hexNoHash) {
+      const now = Date.now();
+      const since = now - lastSentAt;
+
+      if (since >= minIntervalMs) {
+        if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+        sendColorNow(hexNoHash);
+        pendingHex = null;
+        return;
+      }
+
+      pendingHex = hexNoHash;
+      const wait = Math.max(0, minIntervalMs - since);
+
+      if (!pendingTimer) {
+        pendingTimer = setTimeout(() => {
+          pendingTimer = null;
+          if (pendingHex !== null) {
+            const toSend = pendingHex;
+            pendingHex = null;
+            sendColorNow(toSend);
+          }
+        }, wait);
+      }
+    }
+
+    window.onload = async () => {
+      await fetchOptimalHz();
+      await getCurrentColor();
+    };
 
     getButton.addEventListener('click', getCurrentColor);
 
-    colorInput.addEventListener('change', () => {
-      const hex = colorInput.value.replace('#','');
-      fetch(`/set?value=${hex}`)
-        .then(r => r.text())
-        .then(hexWithHash => {
-          currentColorText.textContent = hexWithHash;
-          currentColorBox.style.backgroundColor = hexWithHash;
-          currentColorBox.style.boxShadow = `0 0 20px ${hexWithHash}`;
-        })
-        .catch(console.error);
+    colorInput.addEventListener('input', () => {
+      const hexWithHash = colorInput.value;
+      updatePreview(hexWithHash);
+      const hexNoHash = hexWithHash.replace('#', '');
+      scheduleSend(hexNoHash);
     });
+
+    setInterval(fetchOptimalHz, 15000);
   </script>
 </body>
 </html>

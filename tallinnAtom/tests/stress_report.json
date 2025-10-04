@@ -11,108 +11,59 @@
   ],
   "step_duration_s": 5.0,
   "thresholds": {
-    "latency_slow_ms": 500,
-    "max_err_rate": 0.05,
-    "max_miss_rate": 0.05
+    "latency_slow_ms": 500
   },
   "steps": [
     {
       "rate_hz": 10,
       "sent": 50,
       "errors": 0,
-      "err_rate": 0.0,
       "checked": 10,
       "mismatches": 0,
-      "miss_rate": 0.0,
       "slow": 0,
-      "slow_rate": 0.0,
-      "avg_latency_ms": 28.2,
-      "last_set": "9C59A6"
+      "avg_latency_ms": 29.75,
+      "last_set": "6A199B"
     },
     {
       "rate_hz": 20,
       "sent": 100,
       "errors": 0,
-      "err_rate": 0.0,
       "checked": 20,
       "mismatches": 0,
-      "miss_rate": 0.0,
       "slow": 0,
-      "slow_rate": 0.0,
-      "avg_latency_ms": 27.03,
-      "last_set": "3A6C1B"
+      "avg_latency_ms": 30.98,
+      "last_set": "BE0F34"
     },
     {
       "rate_hz": 50,
-      "sent": 112,
+      "sent": 97,
       "errors": 1,
-      "err_rate": 0.0089,
-      "checked": 23,
+      "checked": 20,
       "mismatches": 0,
-      "miss_rate": 0.0,
       "slow": 0,
-      "slow_rate": 0.0,
-      "avg_latency_ms": 31.28,
-      "last_set": "B5BF34"
-    },
-    {
-      "rate_hz": 75,
-      "sent": 135,
-      "errors": 0,
-      "err_rate": 0.0,
-      "checked": 27,
-      "mismatches": 0,
-      "miss_rate": 0.0,
-      "slow": 0,
-      "slow_rate": 0.0,
-      "avg_latency_ms": 30.23,
-      "last_set": "5F86FE"
-    },
-    {
-      "rate_hz": 100,
-      "sent": 136,
-      "errors": 0,
-      "err_rate": 0.0,
-      "checked": 28,
-      "mismatches": 0,
-      "miss_rate": 0.0,
-      "slow": 0,
-      "slow_rate": 0.0,
-      "avg_latency_ms": 30.45,
-      "last_set": "CBEE74"
-    },
-    {
-      "rate_hz": 125,
-      "sent": 135,
-      "errors": 0,
-      "err_rate": 0.0,
-      "checked": 27,
-      "mismatches": 0,
-      "miss_rate": 0.0,
-      "slow": 0,
-      "slow_rate": 0.0,
-      "avg_latency_ms": 31.14,
-      "last_set": "D7765C"
-    },
-    {
-      "rate_hz": 150,
-      "sent": 133,
-      "errors": 0,
-      "err_rate": 0.0,
-      "checked": 27,
-      "mismatches": 0,
-      "miss_rate": 0.0,
-      "slow": 0,
-      "slow_rate": 0.0,
-      "avg_latency_ms": 31.1,
-      "last_set": "D7DFAB"
+      "avg_latency_ms": 29.56,
+      "last_set": "700014"
     }
   ],
-  "critical_point": null,
+  "critical_point": {
+    "rate_hz": 50,
+    "metrics": {
+      "rate_hz": 50,
+      "sent": 97,
+      "errors": 1,
+      "checked": 20,
+      "mismatches": 0,
+      "slow": 0,
+      "avg_latency_ms": 29.56,
+      "last_set": "700014"
+    }
+  },
+  "max_safe_rate_hz": 20,
   "recovery": {
     "api_ok": true,
     "stays_ok": true,
     "set_ok": true,
-    "after_pause_s": 3.0
-  }
+    "after_pause_s": 2.0
+  },
+  "stop_reason": "errors_detected_at_50_hz"
 }
