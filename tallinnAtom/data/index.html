@@ -31,6 +31,9 @@
       Current color: <span id="currentColorText">#000000</span>
       <span class="color-circle" id="currentColorBox"></span>
     </div>
+    <div class="sensor-bar-preview">
+      Current Sensor Bar: <span id="currentSensorValue"></span>
+    </div>
   </div>
 
   <script>
@@ -39,6 +42,7 @@
     const currentColorText = document.getElementById('currentColorText');
     const currentColorBox = document.getElementById('currentColorBox');
     const hzInfo = document.getElementById('hzInfo');
+    const currentSensorValue = document.getElementById('currentSensorValue');
 
     // Rate limiting state
     let optimalHz = 10;
@@ -46,6 +50,20 @@
     let lastSentAt = 0;
     let pendingHex = null;
     let pendingTimer = null;
+
+
+
+    async function fetchSensorValue() {
+      try {
+        let r = await fetch('/getsensorvalueinbar');
+        let txt = await r.text();
+        currentSensorValue.textContent = txt;
+        
+      } catch (e) {
+        console.error('Failed to get sensor bar current value', e);
+      }
+    }
+
 
     function applyHz(hz) {
       optimalHz = Math.max(1, Math.min(200, Number(hz) || 10));
@@ -117,6 +135,7 @@
     window.onload = async () => {
       await fetchOptimalHz();
       await getCurrentColor();
+      setInterval(fetchSensorValue, 250);
     };
 
     getButton.addEventListener('click', getCurrentColor);

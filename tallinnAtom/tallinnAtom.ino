@@ -18,38 +18,12 @@ WebServer  server(80);
 Preferences prefs;
 CRGB leds[NUM_LEDS];
 
+
+
+int pinG32 = 32;  // GPIO32 is ADC1_CH4
+File myFile;
 // UI prefs
 int optimalHz = 10;  // Default value if nothing stored
-
-// =================== Forward Declarations ===============
-
-// Wi-Fi creds (Preferences: namespace "wifi")
-void saveWifi(const String& ssid, const String& pass);
-void loadWifi(String& ssid, String& pass);
-
-// UI optimal Hz (Preferences: namespace "ui" -> key "opt_hz")
-void saveOptimalHz(int hz);
-void loadOptimalHz(int& hz);
-
-// Static file serving (LittleFS)
-String contentType(const String& path);
-bool   streamFromFS(const String& path);
-void   handleFileRequest();
-
-// Captive portal helpers
-void   handleCaptivePortalRedirect();
-bool   isApiPath(const String& uri);
-
-// API handlers
-void getCurrentLedColorInHEX();
-void setCurrentLedColorInHEX();
-void getOptimalHzHandler();
-void setOptimalHzHandler();
-void changeWifi();
-
-// Setup helpers
-void setupAccessPoint();
-void registerRoutes();
 
 // =================== Preferences: Wi-Fi =================
 
@@ -69,11 +43,6 @@ void loadWifi(String& ssid, String& pass) {
 
 // =================== Preferences: UI Hz =================
 
-void saveOptimalHz(int hz) {
-  prefs.begin("ui", false);
-  prefs.putInt("opt_hz", hz);
-  prefs.end();
-}
 
 void loadOptimalHz(int& hz) {
   prefs.begin("ui", true);
@@ -92,6 +61,7 @@ String contentType(const String& path) {
   if (path.endsWith(".ico"))  return "image/x-icon";
   if (path.endsWith(".svg"))  return "image/svg+xml";
   if (path.endsWith(".json")) return "application/json";
+  if (path.endsWith(".csv")) return "text/html";
   return "text/plain";
 }
 
@@ -129,7 +99,7 @@ bool isApiPath(const String& u) {
       || u.startsWith("/set")
       || u.startsWith("/change")     // matches /changewifi
       || u.startsWith("/getoptimal")
-      || u.startsWith("/setoptimal")
+      || u.startsWith("/getsensorvalueinbar")
       || u.startsWith("/generate_204")
       || u.startsWith("/hotspot-detect.html")
       || u.startsWith("/connectivitycheck.gstatic.com")
@@ -173,20 +143,36 @@ void getOptimalHzHandler() {
   server.send(200, "text/plain", String(optimalHz));
 }
 
-void setOptimalHzHandler() {
-  if (!server.hasArg("hz")) {
-    server.send(400, "text/plain", "Missing 'hz' param");
-    return;
+void getSensorValueInBar() {
+  int val = analogRead(pinG32);  // 0–4095
+  double dividerCoefficient =  1.674;
+  double sensorVoltage = val * dividerCoefficient;
+  double bar = (((sensorVoltage / 5.0)-0.04)/0.0012858)/100000;
+
+
+   // Append data
+  myFile = LittleFS.open("/data.csv", "a"); // append mode
+  if (myFile) {
+    myFile.println(bar);
+     myFile.print(",");
+    myFile.close();
+  } else {
+    Serial.println("Failed to open file for appending!");
   }
-  const int hz = server.arg("hz").toInt();
-  if (hz < 1 || hz > 200) {
-    server.send(400, "text/plain", "hz must be between 1 and 200");
-    return;
-  }
-  optimalHz = hz;
-  saveOptimalHz(optimalHz);
-  server.send(200, "text/plain", String(optimalHz));
+  server.send(200, "text/plain", String(bar));
 }
+
+void eraseDataCSV() {
+   // Append data
+  myFile = LittleFS.open("/data.csv", "w"); 
+  if (myFile) {
+    myFile.close();
+  } else {
+    Serial.println("Failed to open file for appending!");
+  }
+  server.send(200, "text/plain", "erased");
+}
+
 
 // =================== API: Wi-Fi Change ==================
 
@@ -252,7 +238,8 @@ void registerRoutes() {
   server.on("/set",         HTTP_GET, setCurrentLedColorInHEX);
   server.on("/changewifi",  HTTP_GET, changeWifi);
   server.on("/getoptimal",  HTTP_GET, getOptimalHzHandler);
-  server.on("/setoptimal",  HTTP_GET, setOptimalHzHandler);
+  server.on("/eraseDataCSV",  HTTP_GET, eraseDataCSV);
+  server.on("/getsensorvalueinbar",  HTTP_GET, getSensorValueInBar);
 
   // --- Captive-portal well-known endpoints ---
   server.on("/generate_204", []() { server.send(204); });                    // Android
