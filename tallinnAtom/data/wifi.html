@@ -4,33 +4,167 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Update Wi-Fi</title>
-</head>
-<body>
-  <h2>Update Credentials</h2>
-  <form id="credentialsForm">
-    <label for="newLogin">New SSID:</label>
-    <input type="text" id="newLogin" name="newLogin" required />
-    <br><br>
-    <label for="newPassword">New password:</label>
-    <input type="password" id="newPassword" name="newPassword" required minlength="8"/>
-    <br><br>
-    <button type="submit">Submit</button>
-  </form>
+  <style>
+    body{
+      font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;
+      background:#0d1117;
+      color:#e6edf3;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      height:100vh;
+      margin:0
+    }
+    .container{
+      background:#161b22;
+      padding:30px;
+      border-radius:16px;
+      box-shadow:0 0 20px rgba(0,255,200,.3);
+      text-align:center;
+      max-width:420px;
+      width:100%
+    }
+    h1{
+      font-size:28px;
+      margin-bottom:25px;
+      color:#58a6ff;
+      text-shadow:0 0 10px rgba(88,166,255,.6)
+    }
+    label{
+      font-size:16px;
+      margin-bottom:8px;
+      display:block;
+      color:#79c0ff;
+      text-align:left;
+    }
+    .input-group{
+      margin-bottom:18px;
+      text-align:left;
+    }
+    input[type="text"],
+    input[type="password"]{
+      width:100%;
+      padding:10px 12px;
+      border-radius:8px;
+      border:1px solid #30363d;
+      background:#0d1117;
+      color:#e6edf3;
+      font-size:14px;
+      outline:none;
+      transition:border-color .2s, box-shadow .2s;
+      box-sizing:border-box;
+    }
+    input:focus{
+      border-color:#58a6ff;
+      box-shadow:0 0 0 1px rgba(88,166,255,.4);
+    }
+    button{
+      margin-top:10px;
+      background:linear-gradient(90deg,#0ea5e9,#14b8a6);
+      color:#fff;
+      border:none;
+      padding:12px 25px;
+      border-radius:25px;
+      font-size:16px;
+      font-weight:bold;
+      cursor:pointer;
+      transition:.3s;
+      width:100%;
+    }
+    button:hover{
+      background:linear-gradient(90deg,#38bdf8,#2dd4bf);
+      transform:scale(1.02);
+      box-shadow:0 0 12px rgba(56,189,248,.7);
+    }
 
-  <pre id="out"></pre>
+    pre{
+      margin-top:20px;
+      background:#0d1117;
+      border-radius:10px;
+      padding:12px;
+      text-align:left;
+      font-size:13px;
+      border:1px solid #30363d;
+      white-space:pre-wrap;
+      word-break:break-word;
+    }
+
+    #setKeyBtn{
+      margin-top:10px;
+      background:linear-gradient(90deg,#22c55e,#10b981);
+      color:#fff;
+      border:none;
+      padding:14px 25px;
+      border-radius:20px;
+      cursor:pointer;
+      transition:.25s;
+      width:100%;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:2px;
+      box-shadow:0 0 6px rgba(34,197,94,0.25);
+    }
+    #setKeyBtn:hover{
+      background:linear-gradient(90deg,#4ade80,#34d399);
+      transform:scale(1.02);
+      box-shadow:0 0 12px rgba(52,211,153,0.55);
+    }
+    #setKeyBtn .main{
+      font-size:15px;
+      font-weight:700;
+    }
+    #setKeyBtn .sub{
+      font-size:12px;
+      opacity:0.85;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>Update Wi-Fi</h1>
+    
+    <form id="credentialsForm">
+      <div class="input-group">
+        <label for="newLogin">New SSID:</label>
+        <input type="text" id="newLogin" name="newLogin" required />
+      </div>
+
+      <div class="input-group">
+        <label for="newPassword">New password:</label>
+        <input type="password" id="newPassword" name="newPassword" required minlength="8" />
+      </div>
+
+      <button type="submit">Submit</button>
+    </form>
+
+    <pre id="out"></pre>
+
+    <button id="setKeyBtn">
+      <span class="main">Set Key</span>
+      <span class="sub">Go to key setup page</span>
+    </button>
+  </div>
 
   <script>
     const out = document.getElementById('out');
+
     document.getElementById('credentialsForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const ssid = encodeURIComponent(document.getElementById('newLogin').value);
       const password = encodeURIComponent(document.getElementById('newPassword').value);
+      out.textContent = 'Sending new credentials...';
       try {
         const r = await fetch(`/changewifi?ssid=${ssid}&password=${password}`);
         out.textContent = await r.text();
       } catch (err) {
-        out.textContent = 'Error: ' + err;
+        out.textContent = 'Error! ' + err;
       }
+    });
+
+    document.getElementById('setKeyBtn').addEventListener('click', () => {
+      window.location.href = "setkey.html";
     });
   </script>
 </body>
