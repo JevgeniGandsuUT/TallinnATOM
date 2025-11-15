@@ -28,14 +28,14 @@ int optimalHz = 10;  // Default value if nothing stored
 // =================== Preferences: Wi-Fi =================
 
 void saveWifi(const String& ssid, const String& pass) {
-  prefs.begin("wifi", false);
+  prefs.begin("sta", false);
   prefs.putString("ssid", ssid);
   prefs.putString("pass", pass);
   prefs.end();
 }
 
 void loadWifi(String& ssid, String& pass) {
-  prefs.begin("wifi", true);
+  prefs.begin("sta", true);
   ssid = prefs.getString("ssid", "");
   pass = prefs.getString("pass", "");
   prefs.end();
@@ -145,20 +145,20 @@ void getOptimalHzHandler() {
 
 void getSensorValueInBar() {
   int val = analogRead(pinG32);  // 0–4095
-  double dividerCoefficient =  1.674;
-  double sensorVoltage = val * dividerCoefficient;
-  double bar = (((sensorVoltage / 5.0)-0.04)/0.0012858)/100000;
+  double dividerCoefficient =  1.46; //1.24
+  double sensorVoltage = val*dividerCoefficient; //
+  double bar = ((((sensorVoltage / 5.0)-0.04)/0.0012858)/100000)-1;
 
 
    // Append data
-  myFile = LittleFS.open("/data.csv", "a"); // append mode
+  /*myFile = LittleFS.open("/data.csv", "a"); // append mode
   if (myFile) {
     myFile.println(bar);
      myFile.print(",");
     myFile.close();
   } else {
     Serial.println("Failed to open file for appending!");
-  }
+  }*/
   server.send(200, "text/plain", String(bar));
 }
 
@@ -197,23 +197,69 @@ void changeWifi() {
 
 // =================== Setup Helpers ======================
 
-void setupAccessPoint() {
-  WiFi.mode(WIFI_AP);
+void setupWifiMode() {
+  String staSsid, staPass;
+  loadWifi(staSsid, staPass);
 
-  String ssid, pass;
-  loadWifi(ssid, pass);
-  if (ssid.isEmpty()) {
-    ssid = DEFAULT_SSID;
-    pass = DEFAULT_PASS;
+  if (staSsid.isEmpty() || staPass.length() < 8) {
+    // ❌ НЕТ сохранённого WiFi → ЧИСТЫЙ AP-РЕЖИМ
+    Serial.println("No STA WiFi stored -> starting AP only");
+
+    WiFi.mode(WIFI_AP);
+
+    String apSsid = DEFAULT_SSID;
+    String apPass = DEFAULT_PASS;
+
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+    WiFi.softAP(apSsid.c_str(), apPass.c_str());
+
+    dns.start(53, "*", apIP);
+
+    Serial.print("AP SSID: ");
+    Serial.println(apSsid);
+    Serial.print("AP IP: ");
+    Serial.println(apIP);
+
+  } else {
+    // ✅ ЕСТЬ сохранённый WiFi → AP + КЛИЕНТ (STA)
+    Serial.print("STA WiFi stored -> connecting to: ");
+    Serial.println(staSsid);
+
+    // AP + STA, чтобы не потерять доступ к порталу настройки
+    WiFi.mode(WIFI_AP_STA);
+
+    // AP остаётся тем же самым
+    String apSsid = DEFAULT_SSID;
+    String apPass = DEFAULT_PASS;
+
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+    WiFi.softAP(apSsid.c_str(), apPass.c_str());
+    dns.start(53, "*", apIP);
+
+    // Подключаемся как клиент
+    WiFi.begin(staSsid.c_str(), staPass.c_str());
+
+    unsigned long start = millis();
+    const unsigned long timeoutMs = 15000;
+
+    while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
+      delay(500);
+      Serial.print(".");
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.print("STA connected, IP: ");
+      Serial.println(WiFi.localIP());
+    } else {
+      Serial.print("STA connect FAILED, status = ");
+      Serial.println(WiFi.status());     // <-- ????????? ?????? ??????
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_AP);                // ???????? ?????? AP
+    }
   }
-
-  // IMPORTANT: set AP IP before enabling SoftAP
-  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-  WiFi.softAP(ssid.c_str(), pass.c_str());
-
-  // DNS to catch all hostnames and point them to AP IP
-  dns.start(53, "*", apIP);
 }
+
 
 void registerRoutes() {
   // --- Static files from LittleFS ---
@@ -249,9 +295,25 @@ void registerRoutes() {
 }
 
 // =================== Arduino Setup/Loop =================
+void debugScanWifi() {
+  Serial.println("Scanning WiFi...");
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true);
+  delay(1000);
 
+  int n = WiFi.scanNetworks();
+  Serial.printf("Found %d networks:\n", n);
+  for (int i = 0; i < n; i++) {
+    Serial.printf("%2d: %s  RSSI=%d  enc=%d\n",
+                  i,
+                  WiFi.SSID(i).c_str(),
+                  WiFi.RSSI(i),
+                  WiFi.encryptionType(i));
+  }
+  Serial.println("Scan done.");
+}
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
 
   // LED init (turn the pixel red by default)
   FastLED.addLeds<WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);
@@ -266,9 +328,9 @@ void setup() {
   // Load UI prefs
   loadOptimalHz(optimalHz);
   Serial.printf("Optimal Hz loaded: %d\n", optimalHz);
-
-  // Bring up AP + DNS
-  setupAccessPoint();
+  debugScanWifi();
+  // Выбираем режим: AP only или AP + STA (клиент), в зависимости от сохранённого WiFi
+  setupWifiMode();
 
   // HTTP routes
   registerRoutes();
@@ -283,4 +345,6 @@ void loop() {
 
   // Process HTTP requests
   server.handleClient();
+
+  Serial.println(WiFi.localIP());
 }
