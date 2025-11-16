@@ -139,12 +139,19 @@
       <button type="submit">Submit</button>
     </form>
 
+    <form id="credentialsForm">
+      <div class="input-group">
+        <label for="newKey">New Key:</label>
+        <input type="text" id="newKey" name="newKey" required />
+      </div>
+      <button id="setKeyBtn">
+        <span class="main">Set Key</span>
+        <span class="sub">Go to key setup page</span>
+      </button>
+    </form>
     <pre id="out"></pre>
 
-    <button id="setKeyBtn">
-      <span class="main">Set Key</span>
-      <span class="sub">Go to key setup page</span>
-    </button>
+
   </div>
 
   <script>
@@ -163,8 +170,17 @@
       }
     });
 
-    document.getElementById('setKeyBtn').addEventListener('click', () => {
-      window.location.href = "setkey.html";
+    document.getElementById('setKeyBtn').addEventListener('click', async (e) => {
+      e.preventDefault();
+      const key = encodeURIComponent(document.getElementById('newKey').value);
+     
+      out.textContent = 'Sending new key...';
+      try {
+        const r = await fetch(`/setKey?key=${key}`);
+        out.textContent = await r.text();
+      } catch (err) {
+        out.textContent = 'Error! ' + err;
+      }
     });
   </script>
 </body>

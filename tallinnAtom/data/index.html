@@ -5,38 +5,325 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LED Controller</title>
   <style>
-    body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
-    .container{background:#161b22;padding:30px;border-radius:16px;box-shadow:0 0 20px rgba(0,255,200,.3);text-align:center;max-width:420px;width:100%}
-    h1{font-size:28px;margin-bottom:25px;color:#58a6ff;text-shadow:0 0 10px rgba(88,166,255,.6)}
-    label{font-size:18px;margin-bottom:15px;display:block;color:#79c0ff}
-    input[type="color"]{-webkit-appearance:none;border:none;width:90px;height:90px;border-radius:50%;cursor:pointer;padding:0;box-shadow:0 0 15px rgba(0,255,200,.5);overflow:hidden}
-    input[type="color"]::-webkit-color-swatch-wrapper{padding:0;border-radius:50%}
-    input[type="color"]::-webkit-color-swatch{border:none;border-radius:50%}
-    button{margin-top:20px;background:linear-gradient(90deg,#0ea5e9,#14b8a6);color:#fff;border:none;padding:12px 25px;border-radius:25px;font-size:16px;font-weight:bold;cursor:pointer;transition:.3s}
-    button:hover{background:linear-gradient(90deg,#38bdf8,#2dd4bf);transform:scale(1.05);box-shadow:0 0 12px rgba(56,189,248,.7)}
-    .color-preview{margin-top:25px;font-size:18px;font-weight:bold;color:#a5d6ff}
-    .color-circle{display:inline-block;width:60px;height:60px;border-radius:50%;border:2px solid #333;margin-left:12px;vertical-align:middle;box-shadow:0 0 10px rgba(255,255,255,.2);transition:background-color .6s,box-shadow .6s}
-    .hz-label{opacity:.8;font-size:12px;margin-top:8px}
+    body{
+      font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;
+      background:#0d1117;
+      color:#e6edf3;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      height:100vh;
+      margin:0
+    }
+    .container{
+      background:#161b22;
+      padding:30px;
+      border-radius:16px;
+      box-shadow:0 0 20px rgba(0,255,200,.3);
+      text-align:center;
+      max-width:420px;
+      width:100%
+    }
+    h1{
+      font-size:28px;
+      margin-bottom:20px;
+      color:#58a6ff;
+      text-shadow:0 0 10px rgba(88,166,255,.6)
+    }
+    label{
+      font-size:16px;
+      margin-bottom:10px;
+      display:block;
+      color:#79c0ff
+    }
+    input[type="color"]{
+      -webkit-appearance:none;
+      border:none;
+      width:90px;
+      height:90px;
+      border-radius:50%;
+      cursor:pointer;
+      padding:0;
+      box-shadow:0 0 15px rgba(0,255,200,.5);
+      overflow:hidden
+    }
+    input[type="color"]::-webkit-color-swatch-wrapper{
+      padding:0;
+      border-radius:50%
+    }
+    input[type="color"]::-webkit-color-swatch{
+      border:none;
+      border-radius:50%
+    }
+    button{
+      margin-top:10px;
+      background:linear-gradient(90deg,#0ea5e9,#14b8a6);
+      color:#fff;
+      border:none;
+      padding:8px 18px;
+      border-radius:20px;
+      font-size:14px;
+      font-weight:bold;
+      cursor:pointer;
+      transition:.3s
+    }
+    button:hover{
+      background:linear-gradient(90deg,#38bdf8,#2dd4bf);
+      transform:scale(1.03);
+      box-shadow:0 0 12px rgba(56,189,248,.7)
+    }
+    .color-preview{
+      margin-top:15px;
+      font-size:15px;
+      font-weight:bold;
+      color:#a5d6ff
+    }
+    .color-circle{
+      display:inline-block;
+      width:60px;
+      height:60px;
+      border-radius:50%;
+      border:2px solid #333;
+      margin-left:12px;
+      vertical-align:middle;
+      box-shadow:0 0 10px rgba(255,255,255,.2);
+      transition:background-color .6s,box-shadow .6s
+    }
+    .hz-label{
+      opacity:.8;
+      font-size:12px;
+      margin-top:8px
+    }
+    .sensor-bar-preview{
+      margin-top:10px;
+      font-size:14px
+    }
+    .auth-block{
+      margin-bottom:15px;
+      padding:10px;
+      border-radius:10px;
+      background:#0f172a;
+      text-align:left;
+      font-size:13px
+    }
+    .auth-block label{
+      font-size:13px;
+      margin-bottom:4px
+    }
+    .auth-row{
+      display:flex;
+      gap:6px;
+      align-items:center
+    }
+    .auth-row input[type="password"]{
+      flex:1;
+      padding:6px 8px;
+      border-radius:6px;
+      border:1px solid #30363d;
+      background:#0d1117;
+      color:#e6edf3;
+      font-size:13px
+    }
+    .auth-status{
+      margin-top:4px;
+      font-size:12px;
+      opacity:.8
+    }
+    .blocked{
+      opacity:0.4;
+      pointer-events:none;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>LED Controller</h1>
-    <label for="colorPicker">Choose a color:</label>
-    <input type="color" id="colorPicker" />
-    <div class="hz-label" id="hzInfo">optimalHz: …</div>
-    <br>
-    <button id="getButton">Get current color</button>
-    <div class="color-preview">
-      Current color: <span id="currentColorText">#000000</span>
-      <span class="color-circle" id="currentColorBox"></span>
+
+    <!-- Блок для ввода контрольного ключа -->
+    <div class="auth-block">
+      <label for="keyInput">Control key (same as used in /setKey):</label>
+      <div class="auth-row">
+        <input type="password" id="keyInput" placeholder="Enter control key…" />
+        <button id="saveKeyBtn" type="button">Set key</button>
+      </div>
+      <div class="auth-status" id="authStatus">
+        Control key not set – no requests will be sent
+      </div>
     </div>
-    <div class="sensor-bar-preview">
-      Current Sensor Bar: <span id="currentSensorValue"></span>
+
+    <div id="mainUi">
+      <label for="colorPicker">Choose a color:</label>
+      <input type="color" id="colorPicker" />
+      <div class="hz-label" id="hzInfo">optimalHz: —</div>
+      <br>
+      <button id="getButton" type="button">Get current color</button>
+      <div class="color-preview">
+        Current color: <span id="currentColorText">#000000</span>
+        <span class="color-circle" id="currentColorBox"></span>
+      </div>
+      <div class="sensor-bar-preview">
+        Current Sensor Bar: <span id="currentSensorValue">—</span>
+      </div>
     </div>
   </div>
 
   <script>
+    // ================= SHA-256 + HMAC (JS-only) ================
+
+    function utf8ToBytes(str) {
+      const utf8 = unescape(encodeURIComponent(str));
+      const bytes = [];
+      for (let i = 0; i < utf8.length; i++) {
+        bytes.push(utf8.charCodeAt(i));
+      }
+      return bytes;
+    }
+
+    function bytesToHex(bytes) {
+      return bytes.map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    function rotr(n, x) {
+      return (x >>> n) | (x << (32 - n));
+    }
+
+    function sha256Bytes(messageBytes) {
+      const K = [
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+      ];
+
+      // Инициализация
+      let h0 = 0x6a09e667;
+      let h1 = 0xbb67ae85;
+      let h2 = 0x3c6ef372;
+      let h3 = 0xa54ff53a;
+      let h4 = 0x510e527f;
+      let h5 = 0x9b05688c;
+      let h6 = 0x1f83d9ab;
+      let h7 = 0x5be0cd19;
+
+      const bytes = messageBytes.slice();
+      const bitLen = bytes.length * 8;
+
+      // padding: append 0x80, then 0x00, then length (big-endian 64-bit)
+      bytes.push(0x80);
+      while ((bytes.length % 64) !== 56) {
+        bytes.push(0x00);
+      }
+
+      const lenHi = Math.floor(bitLen / 0x100000000);
+      const lenLo = bitLen >>> 0;
+      bytes.push((lenHi >>> 24) & 0xff);
+      bytes.push((lenHi >>> 16) & 0xff);
+      bytes.push((lenHi >>> 8) & 0xff);
+      bytes.push(lenHi & 0xff);
+      bytes.push((lenLo >>> 24) & 0xff);
+      bytes.push((lenLo >>> 16) & 0xff);
+      bytes.push((lenLo >>> 8) & 0xff);
+      bytes.push(lenLo & 0xff);
+
+      const w = new Array(64);
+
+      for (let i = 0; i < bytes.length; i += 64) {
+        for (let t = 0; t < 16; t++) {
+          const j = i + t * 4;
+          w[t] = ((bytes[j] << 24) | (bytes[j + 1] << 16) | (bytes[j + 2] << 8) | bytes[j + 3]) >>> 0;
+        }
+
+        for (let t = 16; t < 64; t++) {
+          const s0 = (rotr(7, w[t - 15]) ^ rotr(18, w[t - 15]) ^ (w[t - 15] >>> 3)) >>> 0;
+          const s1 = (rotr(17, w[t - 2]) ^ rotr(19, w[t - 2]) ^ (w[t - 2] >>> 10)) >>> 0;
+          w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;
+        }
+
+        let a = h0;
+        let b = h1;
+        let c = h2;
+        let d = h3;
+        let e = h4;
+        let f = h5;
+        let g = h6;
+        let h = h7;
+
+        for (let t = 0; t < 64; t++) {
+          const S1 = (rotr(6, e) ^ rotr(11, e) ^ rotr(25, e)) >>> 0;
+          const ch = ((e & f) ^ (~e & g)) >>> 0;
+          const temp1 = (h + S1 + ch + K[t] + w[t]) >>> 0;
+          const S0 = (rotr(2, a) ^ rotr(13, a) ^ rotr(22, a)) >>> 0;
+          const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+          const temp2 = (S0 + maj) >>> 0;
+
+          h = g;
+          g = f;
+          f = e;
+          e = (d + temp1) >>> 0;
+          d = c;
+          c = b;
+          b = a;
+          a = (temp1 + temp2) >>> 0;
+        }
+
+        h0 = (h0 + a) >>> 0;
+        h1 = (h1 + b) >>> 0;
+        h2 = (h2 + c) >>> 0;
+        h3 = (h3 + d) >>> 0;
+        h4 = (h4 + e) >>> 0;
+        h5 = (h5 + f) >>> 0;
+        h6 = (h6 + g) >>> 0;
+        h7 = (h7 + h) >>> 0;
+      }
+
+      const out = [];
+      [h0,h1,h2,h3,h4,h5,h6,h7].forEach(hh => {
+        out.push((hh >>> 24) & 0xff);
+        out.push((hh >>> 16) & 0xff);
+        out.push((hh >>> 8) & 0xff);
+        out.push(hh & 0xff);
+      });
+
+      return out;
+    }
+
+    function sha256Hex(str) {
+      const bytes = utf8ToBytes(str);
+      const hashBytes = sha256Bytes(bytes);
+      return bytesToHex(hashBytes);
+    }
+
+    function hmacSha256Hex(key, message) {
+      const blockSize = 64;
+      let keyBytes = utf8ToBytes(key);
+
+      if (keyBytes.length > blockSize) {
+        keyBytes = sha256Bytes(keyBytes);
+      }
+      if (keyBytes.length < blockSize) {
+        keyBytes = keyBytes.concat(new Array(blockSize - keyBytes.length).fill(0));
+      }
+
+      const oKeyPad = [];
+      const iKeyPad = [];
+      for (let i = 0; i < blockSize; i++) {
+        oKeyPad[i] = keyBytes[i] ^ 0x5c;
+        iKeyPad[i] = keyBytes[i] ^ 0x36;
+      }
+
+      const msgBytes = utf8ToBytes(message);
+      const innerBytes = sha256Bytes(iKeyPad.concat(msgBytes));
+      const outerBytes = sha256Bytes(oKeyPad.concat(innerBytes));
+
+      return bytesToHex(outerBytes);
+    }
+
+    // ================= UI / Logic =============================
+
     const colorInput = document.getElementById('colorPicker');
     const getButton = document.getElementById('getButton');
     const currentColorText = document.getElementById('currentColorText');
@@ -44,26 +331,116 @@
     const hzInfo = document.getElementById('hzInfo');
     const currentSensorValue = document.getElementById('currentSensorValue');
 
-    // Rate limiting state
+    const keyInput = document.getElementById('keyInput');
+    const saveKeyBtn = document.getElementById('saveKeyBtn');
+    const authStatus = document.getElementById('authStatus');
+    const mainUi = document.getElementById('mainUi');
+
+    let initialized = false;
+    let sensorIntervalId = null;
+    let hzIntervalId = null;
+
     let optimalHz = 10;
     let minIntervalMs = 1000 / optimalHz;
     let lastSentAt = 0;
     let pendingHex = null;
     let pendingTimer = null;
 
+    // === Работаем ВСЕГДА через localStorage ===
 
+    function getStoredKey() {
+      return localStorage.getItem('atom_control_key') || "";
+    }
+
+    function keyReady() {
+      const k = getStoredKey();
+      return k && k.length > 0;
+    }
+
+    function stopIntervals() {
+      if (sensorIntervalId !== null) {
+        clearInterval(sensorIntervalId);
+        sensorIntervalId = null;
+      }
+      if (hzIntervalId !== null) {
+        clearInterval(hzIntervalId);
+        hzIntervalId = null;
+      }
+      initialized = false;
+    }
+
+    function startIntervalsIfNeeded() {
+      if (!keyReady()) return;
+      if (initialized) return;
+
+      initialized = true;
+
+      fetchOptimalHz();
+      getCurrentColor();
+      fetchSensorValue();
+
+      sensorIntervalId = setInterval(fetchSensorValue, 250);
+      hzIntervalId = setInterval(fetchOptimalHz, 15000);
+    }
+
+    function refreshAuthFromStorage() {
+      if (keyReady()) {
+        authStatus.textContent = "Control key set – requests enabled";
+        mainUi.classList.remove('blocked');
+        startIntervalsIfNeeded();
+      } else {
+        authStatus.textContent = "Control key not set – no requests will be sent";
+        mainUi.classList.add('blocked');
+        stopIntervals();
+        hzInfo.textContent = 'optimalHz: —';
+        currentSensorValue.textContent = '—';
+      }
+    }
+
+    async function signedFetch(path, params = {}) {
+      const key = getStoredKey();
+      if (!key) {
+        throw new Error("Control key not set");
+      }
+
+      const ts = Date.now().toString();            // время как строка
+
+      const entries = Object.entries(params);      // только обычные параметры (без ts)
+      const paramStr = entries
+        .map(([k, v]) => `${k}=${v}`)
+        .join("&");
+
+      // важный момент: даже если paramStr пустой,
+      // message будет вида "/get||<ts>"
+      const message = `${path}|${paramStr}|${ts}`;
+      const mac = hmacSha256Hex(key, message);
+
+      const signature = `${ts}.${mac}`;           // ts и mac в одном параметре
+
+      const usp = new URLSearchParams();
+      for (const [k, v] of entries) {
+        usp.append(k, v);
+      }
+      usp.append("signature", signature);
+
+      const url = usp.toString().length > 0 ? `${path}?${usp.toString()}` : `${path}`;
+      return fetch(url);
+    }
 
     async function fetchSensorValue() {
+      if (!keyReady()) {
+        currentSensorValue.textContent = "—";
+        return;
+      }
+
       try {
-        let r = await fetch('/getsensorvalueinbar');
-        let txt = await r.text();
+        const r = await signedFetch('/getsensorvalueinbar');
+        const txt = await r.text();
         currentSensorValue.textContent = txt;
-        
       } catch (e) {
         console.error('Failed to get sensor bar current value', e);
       }
     }
-
 
     function applyHz(hz) {
       optimalHz = Math.max(1, Math.min(200, Number(hz) || 10));
@@ -72,8 +449,13 @@
     }
 
     async function fetchOptimalHz() {
+      if (!keyReady()) {
+        hzInfo.textContent = 'optimalHz: —';
+        return;
+      }
+
       try {
-        const r = await fetch('/getoptimal');
+        const r = await signedFetch('/getoptimal');
         const txt = await r.text();
         applyHz(txt.trim());
       } catch (e) {
@@ -90,23 +472,33 @@
     }
 
     async function getCurrentColor() {
+      if (!keyReady()) return;
+
       try {
-        const hex = await (await fetch('/get')).text();
+        const r = await signedFetch('/get');
+        const hex = await r.text();
         updatePreview(hex);
       } catch (e) {
         console.error(e);
       }
     }
 
-    function sendColorNow(hexNoHash) {
-      fetch(`/set?value=${hexNoHash}`)
-        .then(r => r.text())
-        .then(updatePreview)
-        .catch(console.error);
-      lastSentAt = Date.now();
+    async function sendColorNow(hexNoHash) {
+      if (!keyReady()) return;
+
+      try {
+        const r = await signedFetch('/set', { value: hexNoHash });
+        const txt = await r.text();
+        updatePreview(txt);
+        lastSentAt = Date.now();
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     function scheduleSend(hexNoHash) {
+      if (!keyReady()) return;
+
       const now = Date.now();
       const since = now - lastSentAt;
 
@@ -132,22 +524,34 @@
       }
     }
 
-    window.onload = async () => {
-      await fetchOptimalHz();
-      await getCurrentColor();
-      setInterval(fetchSensorValue, 250);
+    // --- Auth UI ---
+    saveKeyBtn.addEventListener('click', () => {
+      const plainKey = keyInput.value.trim();
+      if (!plainKey) {
+        localStorage.removeItem('atom_control_key');
+      } else {
+        localStorage.setItem('atom_control_key', plainKey);
+      }
+      refreshAuthFromStorage();
+    });
+
+    // --- INIT ---
+    window.onload = () => {
+      refreshAuthFromStorage();
     };
 
-    getButton.addEventListener('click', getCurrentColor);
+    getButton.addEventListener('click', () => {
+      if (!keyReady()) return;
+      getCurrentColor();
+    });
 
     colorInput.addEventListener('input', () => {
+      if (!keyReady()) return;
       const hexWithHash = colorInput.value;
       updatePreview(hexWithHash);
       const hexNoHash = hexWithHash.replace('#', '');
       scheduleSend(hexNoHash);
     });
-
-    setInterval(fetchOptimalHz, 15000);
   </script>
 </body>
 </html>
