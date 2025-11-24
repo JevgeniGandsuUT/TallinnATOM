@@ -26,7 +26,8 @@ void loadWifi(String& ssid, String& pass) {
 void setupWifiMode() {
   String staSsid, staPass;
   loadWifi(staSsid, staPass); // loeme NVS-ist salvestatud STA SSID ja parooli
-
+  Serial.println(staSsid);
+  Serial.println(staPass);
   // Kui STA andmeid pole või parool liiga lühike → ainult AP režiim
   if (staSsid.isEmpty() || staPass.length() < 8) {
     Serial.println("No STA WiFi stored -> starting AP only");

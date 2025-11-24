@@ -61,7 +61,7 @@ void registerRoutes() {
 
   // Rõhuanduri hetkväärtus bar'ides + logimine CSV-sse
   server.on("/getsensorvalueinbar", HTTP_GET, getSensorValueInBar);
-
+  server.on("/sensor", HTTP_GET, getSensor);
   // --- Captive-portal "tuntud" endpointid (Android, Apple, Chrome jne) ---
 
   // Android captive portal kontroll (204 tähendab "internet olemas")

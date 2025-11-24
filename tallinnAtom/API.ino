@@ -19,6 +19,7 @@ bool isApiPath(const String& u) {
       || u.startsWith("/change")             // WiFi muutmine (changewifi)
       || u.startsWith("/getoptimal")         // UI sagedus (Hz)
       || u.startsWith("/getsensorvalueinbar")// Rõhuanduri väärtus
+      || u.startsWith("/sensor")// Rõhuanduri väärtus
       || u.startsWith("/eraseDataCSV")       // Logifaili tühjendamine
       || u.startsWith("/generate_204")       // Android captive portal check
       || u.startsWith("/hotspot-detect.html")// Apple captive portal check
@@ -89,12 +90,14 @@ void getOptimalHzHandler() {
 // Loeb rõhuanduri toorväärtuse (0–4095), teisendab selle bar-ideks,
 // logib tulemuse CSV faili ja tagastab selle brauserile.
 void getSensorValueInBar() {
-  if (!ensureAuthorized()) return;
-
-  // просто отдаём lastBar, который постоянно обновляется в loop()
-  server.send(200, "text/plain", String(lastBar, 4)); // 4 знака после запятой, если хочешь
+  if (!ensureAuthorized()) return;  
+  server.send(200, "text/plain", String(lastBar, 4)); 
 }
 
+
+void getSensor() {
+  server.send(200, "text/plain", String(lastBar, 4)); 
+}
 // =================== API: CSV puhastamine ====================
 
 // Tühjendab /data.csv faili (kirjutame selle üle tühja sisuga).

@@ -1,0 +1,96 @@
+###############################################################
+#  RÕHUPÕHINE Z-TELJE JUHTIMINE (thread + filter)
+###############################################################
+
+global p_filt = 0.0        # Filtreeritud rõhk
+global sensor_ok = True    # Kas viimane lugemine õnnestus
+
+
+# ================================================================
+#  THREAD: rõhu lugemine Raspberrylt
+# ================================================================
+thread pressure_thread():
+    alpha = 0.2          # Filtri tugevus (0..1)
+
+    while (True):
+        ok = socket_open("10.43.0.1", 8080, "sensor")
+
+        if (ok == False):
+            sensor_ok = False
+            sleep(0.2)
+        else:
+            socket_send_line("SENSOR", "sensor")
+            line = socket_read_line("sensor", 0.5)
+            socket_close("sensor")
+
+            if (line == "" or line == " "):
+                sensor_ok = False
+            else:
+                # string → number
+                p = to_num(line)
+
+                # piirame 0..5
+                if (p < 0): p = 0 end
+                if (p > 5): p = 5 end
+
+                # madalpääsfilter
+                p_filt = alpha * p + (1 - alpha) * p_filt
+
+                sensor_ok = True
+            end
+
+            sleep(0.1)
+        end
+    end
+end
+
+
+# ================================================================
+#  PÕHIPROGRAMM: liigutab robotit Z-teljel vastavalt p_filt
+# ================================================================
+def main():
+    textmsg("Rõhujuhtimine (thread versioon OK)")
+
+    base = get_actual_tcp_pose()    # baaskoht
+    max_offset = 0.20               # kuni 20cm üles
+    k = 5.0                         # kiiruse tundlikkus
+    max_vz = 0.20                   # max vertikaalkiirus
+
+    # käivitame thread'i
+    th = run pressure_thread()
+
+    while (True):
+
+        if (sensor_ok == False):
+            # sensor katkes → pidurdame sujuvalt
+            speedl([0,0,0,0,0,0], 0.3, 0.1)
+            sleep(0.02)
+            continue
+        end
+
+        p = p_filt
+
+        # rõhk → sihtkõrgus
+        target_z = base[2] + (p / 5.0) * max_offset
+
+        current = get_actual_tcp_pose()
+        current_z = current[2]
+
+        error = target_z - current_z
+
+        # error → kiirus
+        vz = error * k
+
+        # kiiruselimiit
+        if (vz > max_vz): vz = max_vz end
+        if (vz < -max_vz): vz = -max_vz end
+
+        # liikumine Z-teljel
+        speedl([0, 0, vz, 0, 0, 0], 0.5, 0.1)
+
+        sleep(0.02)
+    end
+end
+
+
+main()
