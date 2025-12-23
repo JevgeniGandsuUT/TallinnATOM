@@ -76,12 +76,12 @@ from(bucket: "{INFLUX_BUCKET}")
                     "pressure_now": None,
                     "pressure_prev": None,
                     "delta": None,
-                    "time": None
+                    "_time": None,     # <-- внутреннее поле datetime
                 })
 
                 ts = r.get_time()
-                if ts and (dev["time"] is None or ts > dev["time"]):
-                    dev["time"] = ts
+                if ts and (dev["_time"] is None or ts > dev["_time"]):
+                    dev["_time"] = ts
                     dev["valve_state"] = r.values.get("valve_state")
 
                 if r.get_field() == "pressure_now":
@@ -93,15 +93,24 @@ from(bucket: "{INFLUX_BUCKET}")
     for d in devices.values():
         if d["pressure_now"] is not None and d["pressure_prev"] is not None:
             d["delta"] = d["pressure_now"] - d["pressure_prev"]
-        d["offline"] = is_offline(d["time"])
-        d["time_utc"] = (
-            d["time"].astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-            if d["time"] else "-"
-        )
+
+        t = d.get("_time")
+        d["offline"] = is_offline(t)
+
+        if t:
+            t_utc = t.astimezone(timezone.utc)
+            d["time_utc"] = t_utc.strftime("%Y-%m-%d %H:%M:%S")
+            d["time_ms"] = int(t_utc.timestamp() * 1000)
+        else:
+            d["time_utc"] = "-"
+            d["time_ms"] = None
+
+        # !!! ВАЖНО: datetime наружу не отдаём
+        d.pop("_time", None)
+
         out.append(d)
 
     return sorted(out, key=lambda x: x["device_id"])
-
 
 # ===================== ROUTES =====================
 @app.get("/health")
