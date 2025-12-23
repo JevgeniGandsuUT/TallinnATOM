@@ -1,10 +1,10 @@
 import os
 import json
 import time
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
-from flask import Flask, render_template_string, jsonify, Response, abort, url_for
+from flask import Flask, render_template_string, jsonify, Response, abort
 from influxdb_client import InfluxDBClient
 from dotenv import load_dotenv
 
@@ -21,17 +21,15 @@ MEASUREMENT = os.getenv("INFLUX_MEASUREMENT", "device_status")
 PORT = int(os.getenv("PORT", "5000"))
 
 OFFLINE_SECONDS = int(os.getenv("OFFLINE_SECONDS", "120"))
-SSE_INTERVAL_MS = int(os.getenv("SSE_INTERVAL_MS", "2000"))  # server pushes every N ms
+SSE_INTERVAL_MS = int(os.getenv("SSE_INTERVAL_MS", "2000"))
+INFLUX_RANGE = os.getenv("INFLUX_RANGE", "-10m")  # было -1h, но это иногда тормозит
+INFLUX_TIMEOUT_MS = int(os.getenv("INFLUX_TIMEOUT_MS", "20000"))
 
-# where listener stores init templates + devices.json (same folder as app.py by default)
+# Где лежат init-html фрагменты (listener должен туда писать)
 BASE_DIR = Path(__file__).resolve().parent
-TEMPL_DIR = Path(os.getenv("DEVICE_TEMPLATES_DIR", str(BASE_DIR / "device_templates")))
-DEVICES_JSON = Path(os.getenv("DEVICES_JSON_PATH", str(BASE_DIR / "devices.json")))
+TEMPLATES_DIR = Path(os.getenv("DEVICE_TEMPLATES_DIR", str(BASE_DIR / "device_templates")))
+DEVICES_JSON_PATH = Path(os.getenv("DEVICES_JSON_PATH", str(BASE_DIR / "devices.json")))
 
-# hard limit to avoid serving insane HTML
-MAX_TEMPLATE_BYTES = int(os.getenv("MAX_TEMPLATE_BYTES", "250000"))  # 250KB
-
-# ===================== APP =====================
 app = Flask(__name__)
 
 
@@ -39,7 +37,14 @@ app = Flask(__name__)
 def influx_client():
     if not all([INFLUX_URL, INFLUX_TOKEN, INFLUX_ORG, INFLUX_BUCKET]):
         raise RuntimeError("InfluxDB config missing in .env")
-    return InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+    # timeout в мс
+    return InfluxDBClient(
+        url=INFLUX_URL,
+        token=INFLUX_TOKEN,
+        org=INFLUX_ORG,
+        timeout=INFLUX_TIMEOUT_MS,
+        enable_gzip=True,
+    )
 
 
 def utc_now():
@@ -61,45 +66,20 @@ def fmt_float(v):
         return None
 
 
-def safe_uid(uid: str) -> str:
-    # must match listener save_init_html() sanitizing, so we can open the same file
-    return "".join(c for c in (uid or "") if c.isalnum() or c in ("-", "_", ".")) or "unknown"
+def template_path_for(uid: str) -> Path:
+    safe = "".join(ch for ch in uid if ch.isalnum() or ch in ("_", "-", "."))
+    return TEMPLATES_DIR / f"{safe}.html"
 
 
-def load_devices_meta():
-    if not DEVICES_JSON.exists():
-        return {}
-    try:
-        return json.loads(DEVICES_JSON.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def load_device_init_html(uid: str):
-    suid = safe_uid(uid)
-    path = TEMPL_DIR / f"{suid}.html"
-    if not path.exists():
-        return None, str(path)
-
-    # limit size
-    try:
-        size = path.stat().st_size
-        if size > MAX_TEMPLATE_BYTES:
-            return f"<!-- template too large: {size} bytes -->", str(path)
-    except Exception:
-        pass
-
-    try:
-        html = path.read_text(encoding="utf-8", errors="replace")
-        return html, str(path)
-    except Exception:
-        return None, str(path)
+def has_init_template(uid: str) -> bool:
+    return template_path_for(uid).exists()
 
 
 def load_latest_devices():
+    # last() вернёт последние значения по каждому series (device_id + field)
     query = f"""
 from(bucket: "{INFLUX_BUCKET}")
-  |> range(start: -1h)
+  |> range(start: {INFLUX_RANGE})
   |> filter(fn: (r) => r._measurement == "{MEASUREMENT}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> last()
@@ -121,7 +101,7 @@ from(bucket: "{INFLUX_BUCKET}")
                     "pressure_now": None,
                     "pressure_prev": None,
                     "delta": None,
-                    "_time": None,     # internal datetime
+                    "_time": None,
                 })
 
                 ts = r.get_time()
@@ -133,9 +113,6 @@ from(bucket: "{INFLUX_BUCKET}")
                     dev["pressure_now"] = fmt_float(r.get_value())
                 elif r.get_field() in ("pressure_prev", "pressure_30ms_ago"):
                     dev["pressure_prev"] = fmt_float(r.get_value())
-
-    # merge meta from devices.json (init existence)
-    meta = load_devices_meta()
 
     out = []
     for d in devices.values():
@@ -153,17 +130,12 @@ from(bucket: "{INFLUX_BUCKET}")
             d["time_utc"] = "-"
             d["time_ms"] = None
 
-        # attach init flag + link
-        m = meta.get(d["device_id"], {}) if isinstance(meta, dict) else {}
-        d["has_init"] = bool(m.get("has_init"))
-        d["view_url"] = url_for("device_view", uid=d["device_id"])
+        d["has_view"] = has_init_template(d["device_id"])
 
         d.pop("_time", None)
         out.append(d)
 
-    out.sort(key=lambda x: x["device_id"])
-
-    return out
+    return sorted(out, key=lambda x: x["device_id"])
 
 
 # ===================== ROUTES =====================
@@ -178,8 +150,9 @@ def health():
             "org": INFLUX_ORG,
             "team": TEAM_FILTER,
             "measurement": MEASUREMENT,
-            "templates_dir": str(TEMPL_DIR),
-            "devices_json": str(DEVICES_JSON),
+            "range": INFLUX_RANGE,
+            "timeout_ms": INFLUX_TIMEOUT_MS,
+            "templates_dir": str(TEMPLATES_DIR),
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -188,137 +161,33 @@ def health():
 @app.get("/events/devices")
 def events_devices():
     """
-    Server-Sent Events stream. Browser subscribes and receives JSON snapshots.
+    Server-Sent Events stream. Pushes device snapshot JSON.
+    IMPORTANT: generator runs inside app.app_context().
     """
     def gen():
-        yield "retry: 2000\n\n"
-        while True:
-            try:
-                payload = {
-                    "server_time_utc": utc_now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "devices": load_latest_devices()
-                }
-                yield "event: devices\n"
-                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            except Exception as e:
-                err = {"error": str(e)}
-                yield "event: error\n"
-                yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+        with app.app_context():
+            yield "retry: 2000\n\n"
+            while True:
+                try:
+                    payload = {
+                        "server_time_utc": utc_now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "devices": load_latest_devices()
+                    }
+                    yield ": keepalive\n\n"
+                    yield "event: devices\n"
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                except Exception as e:
+                    err = {"error": str(e)}
+                    yield "event: error\n"
+                    yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
 
-            time.sleep(max(0.2, SSE_INTERVAL_MS / 1000.0))
+                time.sleep(max(0.3, SSE_INTERVAL_MS / 1000.0))
 
     return Response(gen(), mimetype="text/event-stream", headers={
         "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",  # nginx
+        "X-Accel-Buffering": "no",
         "Connection": "keep-alive",
     })
-
-
-@app.get("/device/<uid>")
-def device_view(uid: str):
-    # show init html saved by listener
-    html, path = load_device_init_html(uid)
-
-    page = r"""
-<!doctype html>
-<html lang="et">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Device view · {{ uid }}</title>
-<style>
-*{ box-sizing:border-box; }
-body{
-  margin:0;
-  padding:24px 14px;
-  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-  background:radial-gradient(circle at top,#0f172a 0,#020617 55%,#000 100%);
-  color:#e5e7eb;
-  min-height:100vh;
-}
-.shell{
-  max-width:1200px;
-  margin:0 auto;
-  background:#020617;
-  border-radius:26px;
-  padding:18px 18px 22px 18px;
-  box-shadow:0 0 0 1px rgba(15,23,42,.9),
-             0 35px 120px rgba(15,23,42,.95);
-}
-.top{
-  display:flex;
-  gap:12px;
-  flex-wrap:wrap;
-  align-items:baseline;
-  justify-content:space-between;
-  margin-bottom:14px;
-}
-.h1{
-  font-size:18px;
-  font-weight:800;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-  color:#a5b4fc;
-}
-.meta{
-  font-size:12px;
-  color:#94a3b8;
-  letter-spacing:.12em;
-  text-transform:uppercase;
-}
-a{ color:#8ab4ff; text-decoration:none; }
-.note{
-  margin-top:10px;
-  padding:12px 14px;
-  border-radius:16px;
-  border:1px solid rgba(30,64,175,.25);
-  background:rgba(15,23,42,.55);
-  color:#cbd5e1;
-  font-size:13px;
-}
-.frame-wrap{
-  margin-top:16px;
-  border-radius:18px;
-  overflow:hidden;
-  border:1px solid rgba(30,64,175,.25);
-  background:#000;
-}
-iframe{
-  width:100%;
-  height:860px;
-  border:0;
-  display:block;
-  background:#000;
-}
-</style>
-</head>
-<body>
-  <div class="shell">
-    <div class="top">
-      <div>
-        <div class="h1">Device view · <span style="color:#60a5fa">{{ uid }}</span></div>
-        <div class="meta">init template: <span style="color:#cbd5e1">{{ path }}</span></div>
-      </div>
-      <div class="meta">
-        <a href="{{ url_for('index') }}">← back</a>
-      </div>
-    </div>
-
-    {% if not html %}
-      <div class="note">
-        No init template yet for this device.<br>
-        ESP should publish retained message to: <b>sensors/{{ uid }}/init</b>
-      </div>
-    {% else %}
-      <div class="frame-wrap">
-        <iframe sandbox="allow-scripts allow-same-origin" srcdoc="{{ html|e }}"></iframe>
-      </div>
-    {% endif %}
-  </div>
-</body>
-</html>
-"""
-    return render_template_string(page, uid=uid, html=html, path=path)
 
 
 @app.get("/")
@@ -354,6 +223,24 @@ body{
   padding:26px;
   box-shadow:0 0 0 1px rgba(15,23,42,.9),
              0 35px 120px rgba(15,23,42,.95);
+  overflow:hidden;
+  position:relative;
+}
+
+.card::before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  border-radius:30px;
+  background:conic-gradient(from 140deg,
+    rgba(56,189,248,0.0),
+    rgba(56,189,248,0.55),
+    rgba(129,140,248,0.7),
+    rgba(56,189,248,0.0)
+  );
+  opacity:.22;
+  z-index:-1;
+  filter:blur(12px);
 }
 
 .title{
@@ -367,7 +254,7 @@ body{
 }
 
 .subtitle{
-  margin-top:6px;
+  margin-top:8px;
   font-size:12px;
   color:#94a3b8;
   text-transform:uppercase;
@@ -379,6 +266,8 @@ body{
 }
 
 .subtitle a{ color:#8ab4ff; text-decoration:none; }
+.subtitle a:hover{ text-decoration:underline; }
+
 .muted{ color:#94a3b8; }
 
 .table-wrap{
@@ -394,15 +283,14 @@ table{
   table-layout:fixed;
 }
 
-/* === ФИКС ШИРИНЫ КОЛОНОК === */
-col.device { width:20%; }
-col.view   { width:8%; }
+col.device { width:22%; }
 col.status { width:10%; }
 col.valve  { width:12%; }
 col.now    { width:10%; }
 col.prev   { width:10%; }
 col.delta  { width:10%; }
-col.time   { width:20%; }
+col.time   { width:18%; }
+col.view   { width:8%; }
 
 th, td{
   padding:12px 12px;
@@ -410,6 +298,7 @@ th, td{
   overflow:hidden;
   text-overflow:ellipsis;
   vertical-align:middle;
+  white-space:nowrap;
 }
 
 th{
@@ -427,8 +316,7 @@ th:nth-child(2), td:nth-child(2),
 th:nth-child(3), td:nth-child(3),
 th:nth-child(4), td:nth-child(4),
 th:nth-child(5), td:nth-child(5),
-th:nth-child(6), td:nth-child(6),
-th:nth-child(7), td:nth-child(7){
+th:nth-child(6), td:nth-child(6){
   text-align:center;
 }
 
@@ -472,25 +360,25 @@ th:nth-child(7), td:nth-child(7){
   100%{ transform:scale(1); }
 }
 
-/* view link */
 .view-link{
   display:inline-block;
   padding:6px 10px;
   border-radius:999px;
-  border:1px solid rgba(30,64,175,.35);
-  background:rgba(15,23,42,.75);
-  color:#8ab4ff;
   text-decoration:none;
-  font-weight:600;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-  font-size:11px;
+  color:#e5e7eb;
+  background:rgba(15,23,42,.9);
+  border:1px solid rgba(30,64,175,.35);
 }
+.view-link:hover{ border-color: rgba(56,189,248,.65); }
+
 .view-link.disabled{
-  color:#64748b;
-  border-color:rgba(30,64,175,.2);
-  cursor:not-allowed;
+  opacity:.45;
   pointer-events:none;
+}
+
+@media (max-width:900px){
+  col.time { width:0; }
+  th:nth-child(7), td:nth-child(7){ display:none; }
 }
 </style>
 </head>
@@ -511,25 +399,25 @@ th:nth-child(7), td:nth-child(7){
     <table>
       <colgroup>
         <col class="device">
-        <col class="view">
         <col class="status">
         <col class="valve">
         <col class="now">
         <col class="prev">
         <col class="delta">
         <col class="time">
+        <col class="view">
       </colgroup>
 
       <thead>
         <tr>
           <th>Device</th>
-          <th>View</th>
           <th>Status</th>
           <th>Valve</th>
           <th>Now</th>
           <th>Prev</th>
           <th>Δ</th>
           <th>Last seen</th>
+          <th>View</th>
         </tr>
       </thead>
 
@@ -537,14 +425,6 @@ th:nth-child(7), td:nth-child(7){
         {% for d in devices %}
         <tr data-uid="{{ d.device_id }}">
           <td class="mono" data-k="device_id">{{ d.device_id }}</td>
-
-          <td data-k="view">
-            {% if d.has_init %}
-              <a class="view-link" href="{{ d.view_url }}">view</a>
-            {% else %}
-              <a class="view-link disabled" href="#">no init</a>
-            {% endif %}
-          </td>
 
           <td data-k="status">
             <span class="pill {{ 'offline' if d.offline else 'open' }}">
@@ -571,6 +451,12 @@ th:nth-child(7), td:nth-child(7){
           </td>
 
           <td class="mono" data-k="time">{{ d.time_utc }}</td>
+
+          <td data-k="view">
+            <a class="view-link {{ '' if d.has_view else 'disabled' }}" href="/device/{{ d.device_id }}">
+              {{ 'Open' if d.has_view else 'No init' }}
+            </a>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -598,13 +484,13 @@ th:nth-child(7), td:nth-child(7){
     row.setAttribute("data-uid", uid);
     row.innerHTML = `
       <td class="mono" data-k="device_id"></td>
-      <td data-k="view"></td>
       <td data-k="status"></td>
       <td data-k="valve"></td>
       <td data-k="now"></td>
       <td class="mono" data-k="prev"></td>
       <td class="mono" data-k="delta"></td>
       <td class="mono" data-k="time"></td>
+      <td data-k="view"></td>
     `;
     tbody.appendChild(row);
     return row;
@@ -616,35 +502,23 @@ th:nth-child(7), td:nth-child(7){
 
     row.querySelector('[data-k="device_id"]').textContent = uid;
 
-    // View
-    const viewCell = row.querySelector('[data-k="view"]');
-    if (d.has_init){
-      viewCell.innerHTML = `<a class="view-link" href="${d.view_url}">view</a>`;
-    } else {
-      viewCell.innerHTML = `<a class="view-link disabled" href="#">no init</a>`;
-    }
-
-    // Status
     const statusCell = row.querySelector('[data-k="status"]');
     statusCell.innerHTML = `<span class="pill ${d.offline ? "offline" : "open"}">${d.offline ? "Offline" : "Online"}</span>`;
 
-    // Valve
     const valveCell = row.querySelector('[data-k="valve"]');
-    const valve = d.valve_state || "-";
-    valveCell.innerHTML = `<span class="pill mono">${valve}</span>`;
+    valveCell.innerHTML = `<span class="pill mono">${d.valve_state || "-"}</span>`;
 
-    // Now (alarm > 5)
     const nowCell = row.querySelector('[data-k="now"]');
-    const nowVal = d.pressure_now;
-    const alarm = (nowVal !== null && nowVal !== undefined && Number(nowVal) > 5);
-    nowCell.innerHTML = `<span class="pill mono ${alarm ? "alarm" : ""}">${fmt3(nowVal)}</span>`;
+    const alarm = (d.pressure_now !== null && d.pressure_now !== undefined && Number(d.pressure_now) > 5);
+    nowCell.innerHTML = `<span class="pill mono ${alarm ? "alarm" : ""}">${fmt3(d.pressure_now)}</span>`;
 
-    // Prev / Delta
     row.querySelector('[data-k="prev"]').textContent  = fmt3(d.pressure_prev);
     row.querySelector('[data-k="delta"]').textContent = fmt3(d.delta);
+    row.querySelector('[data-k="time"]').textContent  = d.time_utc || "-";
 
-    // Time
-    row.querySelector('[data-k="time"]').textContent = d.time_utc || "-";
+    const viewCell = row.querySelector('[data-k="view"]');
+    const hasView = !!d.has_view;
+    viewCell.innerHTML = `<a class="view-link ${hasView ? "" : "disabled"}" href="/device/${encodeURIComponent(uid)}">${hasView ? "Open" : "No init"}</a>`;
   }
 
   function applySnapshot(snapshot){
@@ -695,7 +569,56 @@ th:nth-child(7), td:nth-child(7){
     )
 
 
+@app.get("/device/<uid>")
+def device_view(uid: str):
+    p = template_path_for(uid)
+    if not p.exists():
+        # Пока init не приехал/не сохранен listener'ом
+        html = r"""
+<!doctype html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ uid }} · No init</title>
+<style>
+body{
+  margin:0; padding:36px 14px;
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+  background:radial-gradient(circle at top,#0f172a 0,#020617 55%,#000 100%);
+  color:#e5e7eb;
+  display:flex; justify-content:center;
+}
+.card{
+  width:100%; max-width:900px;
+  background:#020617; border-radius:26px;
+  padding:26px;
+  box-shadow:0 0 0 1px rgba(15,23,42,.9),
+             0 35px 120px rgba(15,23,42,.95);
+}
+a{ color:#8ab4ff; text-decoration:none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h2 style="margin:0 0 10px 0;">{{ uid }}</h2>
+    <p style="margin:0; color:#94a3b8;">
+      No init template yet. ESP must publish sensors/{{ uid }}/init and listener must save it to:
+      <code>{{ path }}</code>
+    </p>
+    <p style="margin-top:14px;"><a href="/">← back</a></p>
+  </div>
+</body>
+</html>
+"""
+        return render_template_string(html, uid=uid, path=str(p))
+
+    # Читаем init HTML как есть (это полный HTML документ)
+    # и просто отдаём. Твой init должен НЕ содержать demo setInterval.
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    # note: in prod behind systemd/nginx you can keep debug off
-    app.run(host="0.0.0.0", port=PORT)
+    # threaded важно для SSE
+    app.run(host="0.0.0.0", port=PORT, threaded=True, use_reloader=False)
