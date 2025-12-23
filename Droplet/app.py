@@ -1,6 +1,8 @@
 import os
-from datetime import timezone, datetime
-from flask import Flask, render_template_string, jsonify, url_for
+import json
+import time
+from datetime import datetime, timezone
+from flask import Flask, render_template_string, jsonify, Response
 from influxdb_client import InfluxDBClient
 from dotenv import load_dotenv
 
@@ -15,7 +17,9 @@ INFLUX_BUCKET = os.getenv("INFLUX_BUCKET")
 TEAM_FILTER = os.getenv("TEAM_FILTER", "TallinnAtom")
 MEASUREMENT = os.getenv("INFLUX_MEASUREMENT", "device_status")
 PORT = int(os.getenv("PORT", "5000"))
+
 OFFLINE_SECONDS = int(os.getenv("OFFLINE_SECONDS", "120"))
+SSE_INTERVAL_MS = int(os.getenv("SSE_INTERVAL_MS", "2000"))  # server pushes every N ms
 
 # ===================== APP =====================
 app = Flask(__name__)
@@ -36,6 +40,15 @@ def is_offline(last_time):
     if not last_time:
         return True
     return (utc_now() - last_time.astimezone(timezone.utc)).total_seconds() > OFFLINE_SECONDS
+
+
+def fmt_float(v):
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except Exception:
+        return None
 
 
 def load_latest_devices():
@@ -72,28 +85,69 @@ from(bucket: "{INFLUX_BUCKET}")
                     dev["valve_state"] = r.values.get("valve_state")
 
                 if r.get_field() == "pressure_now":
-                    dev["pressure_now"] = r.get_value()
+                    dev["pressure_now"] = fmt_float(r.get_value())
                 elif r.get_field() in ("pressure_prev", "pressure_30ms_ago"):
-                    dev["pressure_prev"] = r.get_value()
+                    dev["pressure_prev"] = fmt_float(r.get_value())
 
+    out = []
     for d in devices.values():
         if d["pressure_now"] is not None and d["pressure_prev"] is not None:
-            d["delta"] = float(d["pressure_now"]) - float(d["pressure_prev"])
+            d["delta"] = d["pressure_now"] - d["pressure_prev"]
         d["offline"] = is_offline(d["time"])
-        d["time_utc"] = d["time"].astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if d["time"] else "-"
+        d["time_utc"] = (
+            d["time"].astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            if d["time"] else "-"
+        )
+        out.append(d)
 
-    return sorted(devices.values(), key=lambda x: x["device_id"])
+    return sorted(out, key=lambda x: x["device_id"])
 
 
 # ===================== ROUTES =====================
 @app.get("/health")
 def health():
-    with influx_client() as c:
+    try:
+        with influx_client() as c:
+            ok = c.ping()
         return jsonify({
-            "ok": c.ping(),
+            "ok": ok,
             "bucket": INFLUX_BUCKET,
-            "team": TEAM_FILTER
+            "org": INFLUX_ORG,
+            "team": TEAM_FILTER,
+            "measurement": MEASUREMENT
         })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.get("/events/devices")
+def events_devices():
+    """
+    Server-Sent Events stream. Browser subscribes and receives JSON snapshots.
+    """
+    def gen():
+        # allow browser/proxies to keep connection open
+        yield "retry: 2000\n\n"
+        while True:
+            try:
+                payload = {
+                    "server_time_utc": utc_now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "devices": load_latest_devices()
+                }
+                yield "event: devices\n"
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                err = {"error": str(e)}
+                yield "event: error\n"
+                yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+
+            time.sleep(max(0.2, SSE_INTERVAL_MS / 1000.0))
+
+    return Response(gen(), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # nginx
+        "Connection": "keep-alive",
+    })
 
 
 @app.get("/")
@@ -109,7 +163,8 @@ def index():
 <title>TallinnAtomHub</title>
 
 <style>
-*{box-sizing:border-box}
+*{ box-sizing:border-box; }
+
 body{
   margin:0;
   padding:36px 14px;
@@ -119,14 +174,17 @@ body{
   display:flex;
   justify-content:center;
 }
+
 .card{
   width:100%;
   max-width:1200px;
   background:#020617;
   border-radius:26px;
   padding:26px;
-  box-shadow:0 0 0 1px rgba(15,23,42,.9),0 35px 120px rgba(15,23,42,.95);
+  box-shadow:0 0 0 1px rgba(15,23,42,.9),
+             0 35px 120px rgba(15,23,42,.95);
 }
+
 .title{
   font-size:26px;
   font-weight:800;
@@ -136,14 +194,21 @@ body{
   -webkit-background-clip:text;
   color:transparent;
 }
+
 .subtitle{
   margin-top:6px;
   font-size:12px;
   color:#94a3b8;
   text-transform:uppercase;
   letter-spacing:.16em;
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
 }
-.subtitle a{color:#8ab4ff;text-decoration:none}
+
+.subtitle a{ color:#8ab4ff; text-decoration:none; }
+.muted{ color:#94a3b8; }
 
 .table-wrap{
   margin-top:18px;
@@ -158,12 +223,21 @@ table{
   table-layout:fixed;
 }
 
-th,td{
-  padding:12px 10px;
-  font-size:13px;
+/* === ФИКС ШИРИНЫ КОЛОНОК === */
+col.device { width:22%; }
+col.status { width:10%; }
+col.valve  { width:12%; }
+col.now    { width:10%; }
+col.prev   { width:10%; }
+col.delta  { width:10%; }
+col.time   { width:26%; }
+
+th, td{
+  padding:12px 12px;
   border-bottom:1px solid rgba(30,64,175,.25);
   overflow:hidden;
   text-overflow:ellipsis;
+  vertical-align:middle;
 }
 
 th{
@@ -172,28 +246,46 @@ th{
   font-size:11px;
   text-transform:uppercase;
   letter-spacing:.14em;
+  text-align:left;
 }
 
-.mono{font-family:"JetBrains Mono","Fira Code",monospace}
+td{ font-size:13px; }
 
+/* Center short cols for both header and cells */
+th:nth-child(2), td:nth-child(2),
+th:nth-child(3), td:nth-child(3),
+th:nth-child(4), td:nth-child(4),
+th:nth-child(5), td:nth-child(5),
+th:nth-child(6), td:nth-child(6){
+  text-align:center;
+}
+
+.mono{
+  font-family:"JetBrains Mono","Fira Code",Consolas,monospace;
+  font-variant-numeric:tabular-nums;
+}
+
+/* Pills */
 .pill{
   display:inline-block;
   padding:4px 10px;
+  min-width:72px;
+  text-align:center;
   border-radius:999px;
   background:rgba(15,23,42,.9);
   border:1px solid rgba(30,64,175,.35);
   box-shadow:0 0 12px rgba(37,99,235,.35);
 }
 
+.pill.open{
+  border-color:rgba(52,211,153,.4);
+  box-shadow:0 0 14px rgba(52,211,153,.35);
+}
+
 .pill.offline{
   background:rgba(127,29,29,.4);
   border-color:rgba(248,113,113,.4);
   box-shadow:none;
-}
-
-.pill.open{
-  border-color:rgba(52,211,153,.4);
-  box-shadow:0 0 14px rgba(52,211,153,.35);
 }
 
 .pill.alarm{
@@ -204,15 +296,9 @@ th{
 }
 
 @keyframes pulse{
-  0%{transform:scale(1)}
-  50%{transform:scale(1.05)}
-  100%{transform:scale(1)}
-}
-
-.actions a{
-  color:#8ab4ff;
-  font-size:12px;
-  text-decoration:none;
+  0%{ transform:scale(1); }
+  50%{ transform:scale(1.05); }
+  100%{ transform:scale(1); }
 }
 </style>
 </head>
@@ -221,43 +307,174 @@ th{
 <div class="card">
   <div class="title">TallinnAtomHub</div>
   <div class="subtitle">
-    Team: {{ team }} · Bucket: {{ bucket }} · <a href="/health">health</a>
+    <span>Team: {{ team }}</span>
+    <span>· Bucket: {{ bucket }}</span>
+    <span>· <a href="/health">health</a></span>
+    <span class="muted">· SSE: {{ sse_ms }}ms</span>
+    <span class="muted">· server: <span class="mono" id="server-time">{{ server_time }}</span></span>
+    <span class="muted" id="conn-state">· connecting...</span>
   </div>
 
   <div class="table-wrap">
     <table>
-      <tr>
-        <th>Device</th>
-        <th>Status</th>
-        <th>Valve</th>
-        <th>Now</th>
-        <th>Prev</th>
-        <th>Δ</th>
-        <th>Last seen</th>
-      </tr>
+      <colgroup>
+        <col class="device">
+        <col class="status">
+        <col class="valve">
+        <col class="now">
+        <col class="prev">
+        <col class="delta">
+        <col class="time">
+      </colgroup>
 
-      {% for d in devices %}
-      <tr>
-        <td class="mono">{{ d.device_id }}</td>
-        <td>
-          <span class="pill {{ 'offline' if d.offline else 'open' }}">
-            {{ 'Offline' if d.offline else 'Online' }}
-          </span>
-        </td>
-        <td class="mono">{{ d.valve_state or '-' }}</td>
-        <td>
-          <span class="pill {{ 'alarm' if d.pressure_now and d.pressure_now > 5 else '' }}">
-            {{ "%.3f"|format(d.pressure_now) if d.pressure_now is not none else '-' }}
-          </span>
-        </td>
-        <td>{{ "%.3f"|format(d.pressure_prev) if d.pressure_prev is not none else '-' }}</td>
-        <td>{{ "%.3f"|format(d.delta) if d.delta is not none else '-' }}</td>
-        <td class="mono">{{ d.time_utc }}</td>
-      </tr>
-      {% endfor %}
+      <thead>
+        <tr>
+          <th>Device</th>
+          <th>Status</th>
+          <th>Valve</th>
+          <th>Now</th>
+          <th>Prev</th>
+          <th>Δ</th>
+          <th>Last seen</th>
+        </tr>
+      </thead>
+
+      <tbody id="devices-body">
+        {% for d in devices %}
+        <tr data-uid="{{ d.device_id }}">
+          <td class="mono" data-k="device_id">{{ d.device_id }}</td>
+
+          <td data-k="status">
+            <span class="pill {{ 'offline' if d.offline else 'open' }}">
+              {{ 'Offline' if d.offline else 'Online' }}
+            </span>
+          </td>
+
+          <td data-k="valve">
+            <span class="pill mono">{{ d.valve_state or '-' }}</span>
+          </td>
+
+          <td data-k="now">
+            <span class="pill mono {{ 'alarm' if d.pressure_now and d.pressure_now > 5 else '' }}">
+              {{ "%.3f"|format(d.pressure_now) if d.pressure_now is not none else '-' }}
+            </span>
+          </td>
+
+          <td class="mono" data-k="prev">
+            {{ "%.3f"|format(d.pressure_prev) if d.pressure_prev is not none else '-' }}
+          </td>
+
+          <td class="mono" data-k="delta">
+            {{ "%.3f"|format(d.delta) if d.delta is not none else '-' }}
+          </td>
+
+          <td class="mono" data-k="time">{{ d.time_utc }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
     </table>
   </div>
 </div>
+
+<script>
+  const tbody = document.getElementById("devices-body");
+  const serverTimeEl = document.getElementById("server-time");
+  const connStateEl = document.getElementById("conn-state");
+
+  function fmt3(v){
+    if (v === null || v === undefined) return "-";
+    const n = Number(v);
+    if (Number.isNaN(n)) return "-";
+    return n.toFixed(3);
+  }
+
+  function ensureRow(uid){
+    let row = tbody.querySelector(`tr[data-uid="${CSS.escape(uid)}"]`);
+    if (row) return row;
+
+    row = document.createElement("tr");
+    row.setAttribute("data-uid", uid);
+    row.innerHTML = `
+      <td class="mono" data-k="device_id"></td>
+      <td data-k="status"></td>
+      <td data-k="valve"></td>
+      <td data-k="now"></td>
+      <td class="mono" data-k="prev"></td>
+      <td class="mono" data-k="delta"></td>
+      <td class="mono" data-k="time"></td>
+    `;
+    tbody.appendChild(row);
+    return row;
+  }
+
+  function updateRow(d){
+    const uid = d.device_id;
+    const row = ensureRow(uid);
+
+    row.querySelector('[data-k="device_id"]').textContent = uid;
+
+    // Status
+    const statusCell = row.querySelector('[data-k="status"]');
+    statusCell.innerHTML = `<span class="pill ${d.offline ? "offline" : "open"}">${d.offline ? "Offline" : "Online"}</span>`;
+
+    // Valve
+    const valveCell = row.querySelector('[data-k="valve"]');
+    const valve = d.valve_state || "-";
+    valveCell.innerHTML = `<span class="pill mono">${valve}</span>`;
+
+    // Now (alarm > 5)
+    const nowCell = row.querySelector('[data-k="now"]');
+    const nowVal = d.pressure_now;
+    const alarm = (nowVal !== null && nowVal !== undefined && Number(nowVal) > 5);
+    nowCell.innerHTML = `<span class="pill mono ${alarm ? "alarm" : ""}">${fmt3(nowVal)}</span>`;
+
+    // Prev / Delta
+    row.querySelector('[data-k="prev"]').textContent  = fmt3(d.pressure_prev);
+    row.querySelector('[data-k="delta"]').textContent = fmt3(d.delta);
+
+    // Time
+    row.querySelector('[data-k="time"]').textContent = d.time_utc || "-";
+  }
+
+  function applySnapshot(snapshot){
+    if (serverTimeEl && snapshot.server_time_utc){
+      serverTimeEl.textContent = snapshot.server_time_utc;
+    }
+
+    const list = snapshot.devices || [];
+    list.sort((a,b) => (a.device_id || "").localeCompare(b.device_id || ""));
+    for (const d of list) updateRow(d);
+  }
+
+  // ===== SSE wiring =====
+  const es = new EventSource("/events/devices");
+
+  es.onopen = () => {
+    if (connStateEl) connStateEl.textContent = "· connected";
+  };
+
+  es.onerror = () => {
+    if (connStateEl) connStateEl.textContent = "· reconnecting...";
+  };
+
+  es.addEventListener("devices", (evt) => {
+    try{
+      const snapshot = JSON.parse(evt.data);
+      applySnapshot(snapshot);
+    }catch(e){
+      // ignore bad payload
+    }
+  });
+
+  es.addEventListener("error", (evt) => {
+    // server-side error event payload
+    try{
+      const payload = JSON.parse(evt.data);
+      console.warn("SSE error:", payload);
+    }catch(e){}
+  });
+</script>
+
 </body>
 </html>
 """
@@ -265,7 +482,9 @@ th{
         html,
         devices=devices,
         team=TEAM_FILTER,
-        bucket=INFLUX_BUCKET
+        bucket=INFLUX_BUCKET,
+        sse_ms=SSE_INTERVAL_MS,
+        server_time=utc_now().strftime("%Y-%m-%d %H:%M:%S"),
     )
 
 
