@@ -23,68 +23,67 @@ void displayBarOn7Seg(double bar) {
 }
 
 
-void handleLogButton() {
+void handleSolenoidButton() {
   unsigned long now = millis();
   int state = digitalRead(csvButton);
 
-  // --- Nupu detsibees: väldime valeimpulsse ---
+  // Debounce
   if (state != lastButtonState && (now - lastButtonChangeMs) > BUTTON_DEBOUNCE_MS) {
     lastButtonChangeMs = now;
     lastButtonState = state;
 
-    // --- Reageerime ainult nupu vajutamisele (HIGH → LOW) ---
+    // реагируем только на нажатие
     if (state == LOW) {
 
-      // --- Lülitame logimise sisse/välja ---
-      logEnabled = !logEnabled;
+      bool solenoidOn = digitalRead(pinSolenoid) == HIGH;
 
-      Serial.print("Logging is now: ");
-      Serial.println(logEnabled ? "ENABLED" : "DISABLED");
+      // toggle solenoid
+      solenoidOn = !solenoidOn;
 
-      // --- LED annab märku logimisrežiimist ---
-      if (logEnabled) {
-        digitalWrite(csvLED, HIGH);   // logimine sees
-      } else {
-        digitalWrite(csvLED, LOW);    // logimine väljas
-      }
+      digitalWrite(pinSolenoid, solenoidOn ? HIGH : LOW);
+      digitalWrite(csvLED, solenoidOn ? HIGH : LOW);
+
+      Serial.print("Solenoid is now: ");
+      Serial.println(solenoidOn ? "OPEN" : "CLOSED");
     }
   }
 }
 
 
+double readPressureBar() {
+  int val = analogRead(pinSensorBar);
+
+  // Pingejaguri koefitsient (sinu skeemi järgi)
+  double dividerCoefficient = 1.48809;
+  double sensorVoltage = val * dividerCoefficient;
+
+  // Teisendame pinge bar väärtuseks (MPX5700 valem)
+  double bar = ((((sensorVoltage / 5.0) - 0.04) / 0.0012858) / 100000) - 1;
+  return bar;
+}
+
 void updateSensorAndDisplay() {
   unsigned long now = millis();
+  static double prevBar = 0.0;
 
-  // --- 1) Loe andurit kindla intervalliga ---
   if (now - lastSensorReadMs >= SENSOR_INTERVAL_MS) {
     lastSensorReadMs = now;
 
-    int val = analogRead(pinSensorBar);
-
-    // Pingejaguri koefitsient (sinu skeemi järgi)
-    double dividerCoefficient = 1.48809;
-    double sensorVoltage = val * dividerCoefficient;
-
-    // Teisendame pinge bar väärtuseks (MPX5700 valem)
-    double bar = ((((sensorVoltage / 5.0) - 0.04) / 0.0012858) / 100000) - 1;
-
+    double bar = readPressureBar();
     lastBar = bar;
 
-    // --- Kuvame uue väärtuse 7-segmendis ---
+    // display
     displayBarOn7Seg(lastBar);
-  }
 
-  // --- 2) Logime CSV faili ainult siis, kui logimine on sisse lülitatud ---
-  if (logEnabled && now - lastLogMs >= LOG_INTERVAL_MS) {
-    lastLogMs = now;
+    // buffer push
+    Sample s;
+    s.seq = nextSeq++;
+    s.ts_ms = g_timeSynced ? epochMs() : 0;
+    s.pressure_30ms_ago = (float)prevBar;
+    s.pressure_now = (float)lastBar;
+    s.valve_open = (digitalRead(pinSolenoid) == HIGH);
 
-    myFile = LittleFS.open("/data.csv", "a");
-    if (myFile) {
-      myFile.println(lastBar);   // kirjutame väärtuse
-      myFile.print(",");         // eraldaja
-      myFile.close();
-    } else {
-      Serial.println("Failed to open file for appending!");
-    }
+    bufPush(s);
+    prevBar = lastBar;
   }
 }

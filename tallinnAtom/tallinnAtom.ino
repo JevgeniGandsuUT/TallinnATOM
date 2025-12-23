@@ -9,7 +9,9 @@
 #include <stdlib.h>   
 #include <inttypes.h> 
 #include "LedController.hpp"
-
+#include <PubSubClient.h>
+#include <time.h>
+#include <sys/time.h>
 //Led Display Settings
 
 #define DIN 33
@@ -20,13 +22,106 @@ LedController<1,1> lc;
 const unsigned int NUMBER_OF_DIGITS = 4;  
 
 // =================== Sensor / bar state =================
+int pinSolenoid = 26;
 int pinSensorBar = 32;  // GPIO32 is ADC1_CH4
 double lastBar = 0.0;
 unsigned long lastSensorReadMs = 0;
 const uint32_t SENSOR_INTERVAL_MS = 250;   
 
-unsigned long lastLogMs = 0;
-const uint32_t LOG_INTERVAL_MS = 250;     // logimine interval CSV (ms)
+// =================== Lab3 Buffer (last 100) + ACK ===================
+String deviceId = "ESP32_TallinnAtom_01";
+String teamId   = "TallinnAtom";
+WiFiClient wifiClient;
+PubSubClient mqtt(wifiClient);
+String topicStatus; // sensors/<deviceId>/status
+unsigned long lastPublishMs = 0;
+const uint32_t PUBLISH_INTERVAL_MS = 1000; // ms
+const char* MQTT_HOST = "10.8.0.1";   // broker (droplet / VPN)
+const int   MQTT_PORT = 1883;
+
+static const int BUF_SIZE = 100;
+
+struct Sample {
+  uint32_t seq;
+  uint64_t ts_ms;
+  float pressure_30ms_ago;
+  float pressure_now;
+  bool valve_open;
+};
+
+// ===== NTP time sync (epoch ms) =====
+static bool g_timeSynced = false;
+
+void syncTimeNtp() {
+  // Важно: вызывать после того, как STA реально подключился к интернету
+  // (если ты в AP-only без выхода — NTP не сработает)
+
+  // Можно указать твой TZ, но для epoch это не важно. Всё равно UTC внутри.
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+  Serial.print("[NTP] syncing");
+  time_t now = 0;
+  int tries = 0;
+
+  while (tries < 30) { // ~30 секунд
+    time(&now);
+    if (now > 1700000000) { // грубая проверка "не 1970", 2023+
+      g_timeSynced = true;
+      Serial.println("\n[NTP] synced OK");
+      return;
+    }
+    Serial.print(".");
+    delay(1000);
+    tries++;
+  }
+
+  Serial.println("\n[NTP] sync FAILED (no internet?)");
+  g_timeSynced = false;
+}
+
+uint64_t epochMs() {
+  struct timeval tv;
+  gettimeofday(&tv, nullptr);
+  // tv_sec = seconds since epoch, tv_usec = microseconds
+  return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000ULL);
+}
+
+Sample buf[BUF_SIZE];
+int bufHead = 0;
+int bufCount = 0;
+
+uint32_t nextSeq = 1;
+uint32_t lastAckSeq = 0;
+
+bool bufIsEmpty() { return bufCount == 0; }
+bool bufIsFull()  { return bufCount >= BUF_SIZE; }
+
+Sample* bufPeekOldest() {
+  if (bufIsEmpty()) return nullptr;
+  return &buf[bufHead];
+}
+
+void bufPush(const Sample& s) {
+  if (bufIsFull()) {
+    bufHead = (bufHead + 1) % BUF_SIZE;
+    bufCount--;
+  }
+  int tail = (bufHead + bufCount) % BUF_SIZE;
+  buf[tail] = s;
+  bufCount++;
+}
+
+void bufDropConfirmed(uint32_t ackSeq) {
+  while (!bufIsEmpty()) {
+    Sample* o = bufPeekOldest();
+    if (!o) break;
+    if (o->seq <= ackSeq) {
+      bufHead = (bufHead + 1) % BUF_SIZE;
+      bufCount--;
+    } else break;
+  }
+}
+
 
 // Security configuration
 constexpr char     DEFAULT_SSID[] = "TallinnAtom";
@@ -78,6 +173,10 @@ void setup() {
 
   pinMode(csvButton, INPUT_PULLUP); 
 
+  pinMode(pinSolenoid, OUTPUT);
+  digitalWrite(pinSolenoid, LOW); // 
+
+
   pinMode(csvLED,OUTPUT);
   digitalWrite(csvLED,LOW);
 
@@ -98,7 +197,9 @@ void setup() {
 
   // WiFi töörežiimi määramine (AP või AP_STA)
   setupWifiMode();
-
+  if (WiFi.status() == WL_CONNECTED) {
+    syncTimeNtp();
+  }
   // Laeme salajase HMAC võtme (kui eelnevalt salvestatud)
   loadCryptoKey();
   Serial.print("Loaded crypto key: ");
@@ -110,13 +211,86 @@ void setup() {
   // Käivitame HTTP serveri
   server.begin();
   Serial.println("HTTP server started");
+  topicStatus = "sensors/" + deviceId + "/status";
+  ensureMQTT();
+}
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("[MQTT RX] ");
+  Serial.print(topic);
+  Serial.print(" -> ");
+
+  for (unsigned int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
 }
 
+void ensureMQTT() {
+  if (mqtt.connected()) return;
 
+  mqtt.setServer(MQTT_HOST, MQTT_PORT);
+  mqtt.setCallback(mqttCallback);
+
+  String clientId = deviceId + "_" + String((uint32_t)ESP.getEfuseMac(), HEX);
+
+
+  Serial.print("[MQTT] Connecting as ");
+  Serial.println(clientId);
+
+  if (mqtt.connect(clientId.c_str())) {
+    Serial.println("[MQTT] Connected");
+    // ACK пригодится позже, уже можешь подписаться
+    mqtt.subscribe(("sensors/" + deviceId + "/ack").c_str());
+  } else {
+    Serial.print("[MQTT] Failed, rc=");
+    Serial.println(mqtt.state());
+  }
+}
+
+bool publishOldestSample() {
+  Sample* o = bufPeekOldest();
+  if (!o) return true;
+
+  // JSON payload
+  String payload = "{";
+  payload += "\"device_id\":\"" + deviceId + "\",";
+  payload += "\"team\":\"" + teamId + "\",";
+  if (g_timeSynced) {
+  payload += "\"timestamp_ms\":" + String((unsigned long long)o->ts_ms) + ",";
+  } else {
+    // если NTP не синхронизирован — пусть listener поставит now_utc()
+    payload += "\"timestamp_ms\":0,";
+  }
+
+  payload += "\"valve_state\":\"" + String(o->valve_open ? "open" : "closed") + "\",";
+  payload += "\"pressure_30ms_ago\":" + String(o->pressure_30ms_ago, 3) + ",";
+  payload += "\"pressure_now\":" + String(o->pressure_now, 3);
+  payload += "}";
+
+  bool ok = mqtt.publish(topicStatus.c_str(), payload.c_str());
+  if (ok) {
+    Serial.println("[MQTT] sent sample");
+    // временно чистим сразу (ПОКА БЕЗ ACK)
+    bufHead = (bufHead + 1) % BUF_SIZE;
+    bufCount--;
+  } else {
+    Serial.println("[MQTT] publish failed");
+  }
+  return ok;
+}
 
 void loop() {
   dns.processNextRequest();   // captive-portali DNS teenus
   server.handleClient();      // HTTP päringud (UI + API)
-  handleLogButton(); 
+  handleSolenoidButton(); 
   updateSensorAndDisplay();   // а
+
+  ensureMQTT();
+  mqtt.loop();
+
+  unsigned long now = millis();
+  if (mqtt.connected() && bufCount > 0 && now - lastPublishMs >= PUBLISH_INTERVAL_MS) {
+    lastPublishMs = now;
+    publishOldestSample();
+  }
 }

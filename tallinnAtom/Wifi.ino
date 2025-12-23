@@ -67,8 +67,8 @@ void setupWifiMode() {
     dns.start(53, "*", apIP);
 
     // Ühendume salvestatud STA võrku (nt MAX-AP ehk Raspberry)
-    WiFi.begin(staSsid.c_str(), staPass.c_str());
-
+    //WiFi.begin(staSsid.c_str(), staPass.c_str());
+    WiFi.begin(staSsid.c_str());
     unsigned long start = millis();
     const unsigned long timeoutMs = 15000;
 
