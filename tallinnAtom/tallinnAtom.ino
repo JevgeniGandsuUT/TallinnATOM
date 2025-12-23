@@ -34,6 +34,7 @@ String teamId   = "TallinnAtom";
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 String topicStatus; // sensors/<deviceId>/status
+String topicInit; // sensors/<deviceId>/init
 unsigned long lastPublishMs = 0;
 const uint32_t PUBLISH_INTERVAL_MS = 1000; // ms
 const char* MQTT_HOST = "10.8.0.1";   // broker (droplet / VPN)
@@ -212,6 +213,9 @@ void setup() {
   server.begin();
   Serial.println("HTTP server started");
   topicStatus = "sensors/" + deviceId + "/status";
+  topicInit  = "sensors/" + deviceId + "/init";
+  mqtt.setBufferSize(16384);   // если твоя PubSubClient поддерживает
+  Serial.printf("[MQTT] buffer size=%d\n", mqtt.getBufferSize());
   ensureMQTT();
 }
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -241,6 +245,8 @@ void ensureMQTT() {
     Serial.println("[MQTT] Connected");
     // ACK пригодится позже, уже можешь подписаться
     mqtt.subscribe(("sensors/" + deviceId + "/ack").c_str());
+    // ВАЖНО: init шлём только когда STA подключен
+    publishInitHtmlIfSta();
   } else {
     Serial.print("[MQTT] Failed, rc=");
     Serial.println(mqtt.state());
@@ -269,13 +275,38 @@ bool publishOldestSample() {
 
   bool ok = mqtt.publish(topicStatus.c_str(), payload.c_str());
   if (ok) {
-    Serial.println("[MQTT] sent sample");
     // временно чистим сразу (ПОКА БЕЗ ACK)
     bufHead = (bufHead + 1) % BUF_SIZE;
     bufCount--;
   } else {
     Serial.println("[MQTT] publish failed");
   }
+  return ok;
+}
+bool publishInitHtmlIfSta() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[INIT] STA not connected -> skip init publish");
+    return false;
+  }
+  if (!mqtt.connected()) {
+    Serial.println("[INIT] MQTT not connected -> skip init publish");
+    return false;
+  }
+
+  // твой файл в LittleFS
+  const char* path = "/sensorbar.html";   // или "/init.html"
+  String html = readFileToString(path);
+  if (html.length() == 0) {
+    Serial.printf("[INIT] %s empty or not found\n", path);
+    return false;
+  }
+
+  // retain=true чтобы сервер получил сразу после подписки
+  bool ok = mqtt.publish(topicInit.c_str(), html.c_str(), true);
+
+  Serial.printf("[INIT] publish %s size=%d retain=true => %s\n",
+                topicInit.c_str(), (int)html.length(), ok ? "OK" : "FAIL");
+
   return ok;
 }
 

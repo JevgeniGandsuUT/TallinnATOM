@@ -1,42 +1,31 @@
-<!DOCTYPE html>
-<html lang="et">
-<head>
-  <meta charset="UTF-8">
-  <title>Sensorseadme olek</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
+<!-- TallinnAtom device init fragment (safe to embed) -->
+<div id="ta-root">
   <style>
-    *{
-      box-sizing:border-box;
-    }
-    body{
-      margin:0;
-      padding:40px 16px;
-      font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      background:radial-gradient(circle at top,#0f172a 0,#020617 55%,#000 100%);
-      color:#e5e7eb;
+    /* Scope EVERYTHING into #ta-root so it won't break the outer Flask page */
+    #ta-root * { box-sizing: border-box; }
+
+    #ta-root{
+      width:100%;
       display:flex;
       flex-direction:column;
-      align-items:center;
       gap:24px;
-      min-height:100vh;
+      align-items:center;
     }
 
-    .card{
+    #ta-root .card{
       position:relative;
       background:#020617;
       border-radius:26px;
       padding:32px 40px;
-      min-width:480px;
-      max-width:720px;
       width:100%;
+      max-width:720px;
       box-shadow:
         0 0 0 1px rgba(15,23,42,0.9),
         0 35px 120px rgba(15,23,42,0.95);
       overflow:hidden;
     }
 
-    .card::before{
+    #ta-root .card::before{
       content:"";
       position:absolute;
       inset:-2px;
@@ -49,12 +38,17 @@
         rgba(56,189,248,0.0)
       );
       opacity:0.35;
-      z-index:-1;
+      z-index:0;
       filter:blur(12px);
     }
 
-    .title{
-      font-size:32px;
+    #ta-root .inner{
+      position:relative;
+      z-index:1;
+    }
+
+    #ta-root .title{
+      font-size:28px;
       font-weight:700;
       letter-spacing:0.05em;
       text-transform:uppercase;
@@ -64,93 +58,82 @@
       color:transparent;
     }
 
-    .subtitle{
-      font-size:14px;
+    #ta-root .subtitle{
+      font-size:13px;
       color:#94a3b8;
-      margin-bottom:26px;
+      margin-bottom:22px;
       text-transform:uppercase;
       letter-spacing:0.16em;
     }
 
-    .grid{
-      margin-top:10px;
-    }
-
-    .row{
+    #ta-root .row{
       display:flex;
       justify-content:space-between;
       align-items:center;
+      gap:14px;
       padding:10px 0;
       border-bottom:1px solid rgba(30,64,175,0.35);
       font-size:15px;
     }
-    .row:last-child{
-      border-bottom:none;
-    }
+    #ta-root .row:last-child{ border-bottom:none; }
 
-    .label{
+    #ta-root .label{
       color:#9ca3af;
       text-transform:uppercase;
       letter-spacing:0.12em;
       font-size:12px;
+      flex:1;
+      min-width:160px;
     }
 
-    .value{
+    #ta-root .value{
       font-family:"JetBrains Mono","Fira Code",Consolas,monospace;
       font-size:16px;
       font-weight:500;
       color:#e5e7eb;
       padding:4px 10px;
-      min-width:150px;
+      min-width:170px;
       text-align:right;
       border-radius:999px;
       background:rgba(15,23,42,0.9);
       box-shadow:0 0 14px rgba(37,99,235,0.45);
       transition:background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+      white-space:nowrap;
     }
 
-    .value.placeholder{
+    #ta-root .value.placeholder{
       color:#6b7280;
       box-shadow:none;
     }
 
-    /* 🔴 ALARM: rõhk praegu > 5 bar */
-    .value.alarm{
+    /* ALARM: pressure_now > 5 bar */
+    #ta-root .value.alarm{
       background:rgba(127,29,29,0.96);
       color:#fee2e2;
       box-shadow:0 0 22px rgba(248,113,113,0.95);
-      animation:alarmPulse 0.8s ease-in-out infinite;
+      animation:taAlarmPulse 0.8s ease-in-out infinite;
     }
 
-    @keyframes alarmPulse{
-      0%{
-        transform:scale(1);
-        box-shadow:0 0 16px rgba(248,113,113,0.7);
-      }
-      50%{
-        transform:scale(1.05);
-        box-shadow:0 0 30px rgba(248,113,113,1);
-      }
-      100%{
-        transform:scale(1);
-        box-shadow:0 0 16px rgba(248,113,113,0.7);
-      }
+    @keyframes taAlarmPulse{
+      0%{ transform:scale(1); box-shadow:0 0 16px rgba(248,113,113,0.7); }
+      50%{ transform:scale(1.05); box-shadow:0 0 30px rgba(248,113,113,1); }
+      100%{ transform:scale(1); box-shadow:0 0 16px rgba(248,113,113,0.7); }
     }
 
-    .chart-card{
+    #ta-root .chart-card{
       position:relative;
       background:#020617;
       border-radius:26px;
       padding:24px 30px 30px 30px;
-      min-width:480px;
-      max-width:900px;
       width:100%;
+      max-width:900px;
       box-shadow:
         0 0 0 1px rgba(15,23,42,0.9),
         0 35px 120px rgba(15,23,42,0.95);
       overflow:hidden;
     }
-    .chart-card::before{
+
+    #ta-root .chart-card::before{
       content:"";
       position:absolute;
       inset:-2px;
@@ -163,260 +146,201 @@
         rgba(56,189,248,0.0)
       );
       opacity:0.25;
-      z-index:-1;
+      z-index:0;
       filter:blur(14px);
     }
-    .chart-title{
-      font-size:18px;
+
+    #ta-root .chart-inner{ position:relative; z-index:1; }
+
+    #ta-root .chart-title{
+      font-size:16px;
       font-weight:600;
       letter-spacing:0.08em;
       text-transform:uppercase;
       margin-bottom:4px;
       color:#a5b4fc;
     }
-    .chart-subtitle{
+
+    #ta-root .chart-subtitle{
       font-size:12px;
       color:#64748b;
       margin-bottom:16px;
       letter-spacing:0.16em;
       text-transform:uppercase;
     }
-    .chart-wrapper{
+
+    #ta-root .chart-wrapper{
       position:relative;
       width:100%;
       height:320px;
     }
 
     @media (max-width:640px){
-      body{
-        padding:24px 8px;
-      }
-      .card,
-      .chart-card{
+      #ta-root .card,
+      #ta-root .chart-card{
         padding:24px 18px;
-        min-width:0;
-        width:100%;
       }
-      .value{
-        min-width:120px;
+      #ta-root .value{
+        min-width:130px;
         font-size:14px;
       }
-      .chart-wrapper{
+      #ta-root .label{
+        min-width:120px;
+      }
+      #ta-root .chart-wrapper{
         height:260px;
       }
     }
   </style>
-</head>
-<body>
-  <!-- STAATUSPANEEL -->
-  <div class="card">
-    <div class="title">Sensorseadme olek</div>
-    <div class="subtitle">Andmed uuendatakse mqtt sõnumite põhjal</div>
 
-    <div class="grid">
+  <!-- STATUS PANEL -->
+  <div class="card">
+    <div class="inner">
+      <div class="title">Sensorseadme olek</div>
+      <div class="subtitle">Andmed uuendatakse mqtt sõnumite põhjal</div>
+
       <div class="row">
         <div class="label">Seadme identifikator</div>
-        <div class="value placeholder" id="device-uid">---</div>
+        <div class="value placeholder" id="ta-device-uid">---</div>
       </div>
 
       <div class="row">
         <div class="label">Timestamp (ms)</div>
-        <div class="value placeholder" id="ts-ms">---</div>
+        <div class="value placeholder" id="ta-ts-ms">---</div>
       </div>
 
       <div class="row">
         <div class="label">Klapi olek</div>
-        <div class="value placeholder" id="valve-state">---</div>
+        <div class="value placeholder" id="ta-valve-state">---</div>
       </div>
 
       <div class="row">
         <div class="label">Rõhk 30 ms tagasi</div>
-        <div class="value placeholder" id="pressure-prev">---</div>
+        <div class="value placeholder" id="ta-pressure-prev">---</div>
       </div>
 
       <div class="row">
         <div class="label">Rõhk praegu</div>
-        <div class="value placeholder" id="pressure-now">---</div>
+        <div class="value placeholder" id="ta-pressure-now">---</div>
       </div>
     </div>
   </div>
 
-  <!-- GRAAFIK -->
+  <!-- CHART -->
   <div class="chart-card">
-    <div class="chart-title">RÕHU REAALAEGNE GRAAFIK</div>
-    <div class="chart-subtitle">pressure_now · 5 bar alarmijoon</div>
-    <div class="chart-wrapper">
-      <canvas id="pressureChart"></canvas>
+    <div class="chart-inner">
+      <div class="chart-title">RÕHU REAALAEGNE GRAAFIK</div>
+      <div class="chart-subtitle">pressure_now · 5 bar alarmijoon</div>
+      <div class="chart-wrapper">
+        <canvas id="ta-pressureChart"></canvas>
+      </div>
+
+      <!-- Optional note if Chart.js isn't loaded by the outer page -->
+      <div id="ta-chart-missing" style="display:none; margin-top:12px; color:#94a3b8; font-size:12px;">
+        Chart.js is not loaded on this page.
+      </div>
     </div>
   </div>
 
-  <!-- Chart.js + annotation plugin -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
-
   <script>
-    // ---------- STAATUSPANEELI UUENDAMINE ----------
-    function setValue(id, value){
-      const el = document.getElementById(id);
-      el.textContent = value;
-      el.classList.remove("placeholder");
-    }
-
-    // ---------- CHART.JS KONFIG ----------
-    const ctx = document.getElementById("pressureChart").getContext("2d");
-
-    const pressureChartData = {
-      labels: [],
-      datasets: [
-        {
-          label: "Rõhk praegu",
-          data: [],
-          tension: 0.25,
-          borderWidth: 2,
-          borderColor: "rgba(56,189,248,1)",
-          backgroundColor: "rgba(56,189,248,0.15)",
-          pointRadius: 0
-        }
-      ]
-    };
-
-    const pressureChart = new Chart(ctx, {
-      type: "line",
-      data: pressureChartData,
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: {
-          duration: 200
-        },
-        plugins: {
-          legend: {
-            labels: {
-              color: "#e5e7eb",
-              font: { size: 11 }
-            }
-          },
-          tooltip: {
-            mode: "index",
-            intersect: false
-          },
-          // 🔴 5 bar horisontaalne alarmijoon
-          annotation: {
-            annotations: {
-              dangerLine: {
-                type: "line",
-                yMin: 5,
-                yMax: 5,
-                borderColor: "rgba(255,75,75,1)",
-                borderWidth: 2,
-                borderDash: [6,6],
-                label: {
-                  enabled: true,
-                  content: "5 bar piir",
-                  color: "#ff4b4b",
-                  backgroundColor: "rgba(0,0,0,0.6)",
-                  position: "end",
-                  font: {
-                    size: 11,
-                    family: "JetBrains Mono, monospace"
-                  }
-                }
-              }
-            }
-          }
-        },
-        interaction: {
-          mode: "index",
-          intersect: false
-        },
-        scales: {
-          x: {
-            ticks: {
-              color: "#9ca3af",
-              maxRotation: 0,
-              autoSkip: true,
-              autoSkipPadding: 12
-            },
-            grid: {
-              color: "rgba(30,64,175,0.35)"
-            },
-            title: {
-              display: true,
-              text: "Aeg (viimane N mõõtmist)",
-              color: "#6b7280",
-              font: { size: 11 }
-            }
-          },
-          y: {
-            ticks: { color: "#9ca3af" },
-            grid: { color: "rgba(30,64,175,0.25)" },
-            title: {
-              display: true,
-              text: "Rõhk (bar)",
-              color: "#6b7280",
-              font: { size: 11 }
-            }
-          }
-        }
+    (function(){
+      // ---- Safe setters ----
+      function setValue(id, value){
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = String(value);
+        el.classList.remove("placeholder");
       }
-    });
 
-    const MAX_POINTS = 120;
+      // ---- Chart init (expects Chart.js already on page) ----
+      var chart = null;
+      var data = null;
+      var MAX_POINTS = 120;
 
-    // ---------- KESKNE FUNKTSIOON, MIDA MQTT KUTSUB ----------
-    function handleSensorUpdate(payload){
+      function initChartIfPossible(){
+        var canvas = document.getElementById("ta-pressureChart");
+        if (!canvas) return;
+
+        if (typeof Chart === "undefined"){
+          var m = document.getElementById("ta-chart-missing");
+          if (m) m.style.display = "block";
+          return;
+        }
+
+        var ctx = canvas.getContext("2d");
+        data = {
+          labels: [],
+          datasets: [{
+            label: "Rõhk praegu",
+            data: [],
+            tension: 0.25,
+            borderWidth: 2,
+            pointRadius: 0
+          }]
+        };
+
+        chart = new Chart(ctx, {
+          type: "line",
+          data: data,
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 150 },
+            plugins: {
+              legend: { display: true }
+            },
+            interaction: { mode: "index", intersect: false },
+            scales: {
+              x: { ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 12 } },
+              y: { title: { display: true, text: "Rõhk (bar)" } }
+            }
+          }
+        });
+      }
+
+      // Expose global hook for server / page to call:
       // payload = { uid, ts_ms, valve_state, pressure_prev, pressure_now }
+      window.handleSensorUpdate = function(payload){
+        if (!payload) return;
 
-      setValue("device-uid", payload.uid);
-      setValue("ts-ms", payload.ts_ms);
-      setValue("valve-state", payload.valve_state);
-      setValue("pressure-prev", payload.pressure_prev);
-      setValue("pressure-now", payload.pressure_now);
+        setValue("ta-device-uid", payload.uid ?? "---");
+        setValue("ta-ts-ms", payload.ts_ms ?? "---");
+        setValue("ta-valve-state", payload.valve_state ?? "---");
+        setValue("ta-pressure-prev", payload.pressure_prev ?? "---");
+        setValue("ta-pressure-now", payload.pressure_now ?? "---");
 
-      const label = new Date(payload.ts_ms).toLocaleTimeString("et-EE",{hour12:false});
-      pressureChartData.labels.push(label);
-      pressureChartData.datasets[0].data.push(payload.pressure_now);
+        // Alarm > 5
+        var pressureNowEl = document.getElementById("ta-pressure-now");
+        var p = parseFloat(payload.pressure_now);
+        if (pressureNowEl){
+          if (!isNaN(p) && p > 5) pressureNowEl.classList.add("alarm");
+          else pressureNowEl.classList.remove("alarm");
+        }
 
-      if (pressureChartData.labels.length > MAX_POINTS){
-        pressureChartData.labels.shift();
-        pressureChartData.datasets[0].data.shift();
-      }
+        // Chart update
+        if (!chart || !data) return;
 
-      pressureChart.update("none");
+        var ts = Number(payload.ts_ms);
+        var label = isFinite(ts)
+          ? new Date(ts).toLocaleTimeString("et-EE",{hour12:false})
+          : new Date().toLocaleTimeString("et-EE",{hour12:false});
 
-      // 🔴 lülita "Rõhk praegu" pill alarm-režiimi kui > 5 bar
-      const pressureNowEl = document.getElementById("pressure-now");
-      const p = parseFloat(payload.pressure_now);
-      if (!isNaN(p) && p > 5){
-        pressureNowEl.classList.add("alarm");
-      } else {
-        pressureNowEl.classList.remove("alarm");
-      }
-    }
+        data.labels.push(label);
+        data.datasets[0].data.push(Number(payload.pressure_now));
 
-    // ---------- DEMO: PSEUDO-LIVE ANDMED (eemalda päris süsteemis) ----------
-    let demoTs = Date.now();
-    let basePressure = 4.7; // nii, et vahel ületab 5 bar
-
-    function simulateIncomingData(){
-      demoTs += 500;
-      basePressure += (Math.random() - 0.5) * 0.25;
-      const now = +(basePressure + Math.sin(demoTs / 2500) * 0.3).toFixed(3);
-      const prev = +(now - 0.03 + (Math.random() - 0.5) * 0.02).toFixed(3);
-      const valve = now > 5 ? "lahti" : "kinni";
-
-      const payload = {
-        uid: "sensor-3bar-001",
-        ts_ms: demoTs,
-        valve_state: valve,
-        pressure_prev: prev,
-        pressure_now: now
+        if (data.labels.length > MAX_POINTS){
+          data.labels.shift();
+          data.datasets[0].data.shift();
+        }
+        chart.update("none");
       };
 
-      handleSensorUpdate(payload);
-    }
-
-    setInterval(simulateIncomingData, 500);
+      // init chart once DOM is ready (in case fragment is injected)
+      if (document.readyState === "loading"){
+        document.addEventListener("DOMContentLoaded", initChartIfPossible);
+      } else {
+        initChartIfPossible();
+      }
+    })();
   </script>
-</body>
-</html>
+</div>

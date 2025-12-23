@@ -1,5 +1,15 @@
 // =================== LittleFS / Static Files (statiliste failide teenindamine) ============
-
+String readFileToString(const char* path) {
+  File f = LittleFS.open(path, "r");
+  if (!f) {
+    Serial.printf("[FS] open failed: %s\n", path);
+    return "";
+  }
+  String s;
+  while (f.available()) s += (char)f.read();
+  f.close();
+  return s;
+}
 // Määrab MIME-tüübi vastavalt faililaiendile
 // (vajalik, et brauser kuvaks faile õigesti)
 String contentType(const String& path) {
