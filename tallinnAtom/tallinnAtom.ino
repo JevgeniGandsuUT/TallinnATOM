@@ -275,6 +275,7 @@ bool publishOldestSample() {
 
   bool ok = mqtt.publish(topicStatus.c_str(), payload.c_str());
   if (ok) {
+    Serial.println("[MQTT] sent sample");
     // временно чистим сразу (ПОКА БЕЗ ACK)
     bufHead = (bufHead + 1) % BUF_SIZE;
     bufCount--;
