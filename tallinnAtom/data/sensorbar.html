@@ -1,3 +1,4 @@
+<!-- sensorbar.html (English labels) -->
 <!-- TallinnAtom device init fragment (safe to embed) -->
 <div id="ta-root">
   <style>
@@ -196,11 +197,11 @@
   <!-- STATUS PANEL -->
   <div class="card">
     <div class="inner">
-      <div class="title">Sensorseadme olek</div>
-      <div class="subtitle">Andmed uuendatakse mqtt sõnumite põhjal</div>
+      <div class="title">Device status</div>
+      <div class="subtitle">Data updates via MQTT messages</div>
 
       <div class="row">
-        <div class="label">Seadme identifikator</div>
+        <div class="label">Device ID</div>
         <div class="value placeholder" id="ta-device-uid">---</div>
       </div>
 
@@ -210,17 +211,17 @@
       </div>
 
       <div class="row">
-        <div class="label">Klapi olek</div>
+        <div class="label">Valve state</div>
         <div class="value placeholder" id="ta-valve-state">---</div>
       </div>
 
       <div class="row">
-        <div class="label">Rõhk 30 ms tagasi</div>
+        <div class="label">Pressure 30 ms ago</div>
         <div class="value placeholder" id="ta-pressure-prev">---</div>
       </div>
 
       <div class="row">
-        <div class="label">Rõhk praegu</div>
+        <div class="label">Pressure now</div>
         <div class="value placeholder" id="ta-pressure-now">---</div>
       </div>
     </div>
@@ -229,13 +230,12 @@
   <!-- CHART -->
   <div class="chart-card">
     <div class="chart-inner">
-      <div class="chart-title">RÕHU REAALAEGNE GRAAFIK</div>
-      <div class="chart-subtitle">pressure_now · 5 bar alarmijoon</div>
+      <div class="chart-title">REAL-TIME PRESSURE CHART</div>
+      <div class="chart-subtitle">pressure_now · 5 bar alarm line</div>
       <div class="chart-wrapper">
         <canvas id="ta-pressureChart"></canvas>
       </div>
 
-      <!-- Optional note if Chart.js isn't loaded by the outer page -->
       <div id="ta-chart-missing" style="display:none; margin-top:12px; color:#94a3b8; font-size:12px;">
         Chart.js is not loaded on this page.
       </div>
@@ -244,7 +244,6 @@
 
   <script>
     (function(){
-      // ---- Safe setters ----
       function setValue(id, value){
         var el = document.getElementById(id);
         if (!el) return;
@@ -252,7 +251,6 @@
         el.classList.remove("placeholder");
       }
 
-      // ---- Chart init (expects Chart.js already on page) ----
       var chart = null;
       var data = null;
       var MAX_POINTS = 120;
@@ -271,7 +269,7 @@
         data = {
           labels: [],
           datasets: [{
-            label: "Rõhk praegu",
+            label: "Pressure now",
             data: [],
             tension: 0.25,
             borderWidth: 2,
@@ -292,13 +290,12 @@
             interaction: { mode: "index", intersect: false },
             scales: {
               x: { ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 12 } },
-              y: { title: { display: true, text: "Rõhk (bar)" } }
+              y: { title: { display: true, text: "Pressure (bar)" } }
             }
           }
         });
       }
 
-      // Expose global hook for server / page to call:
       // payload = { uid, ts_ms, valve_state, pressure_prev, pressure_now }
       window.handleSensorUpdate = function(payload){
         if (!payload) return;
@@ -322,8 +319,8 @@
 
         var ts = Number(payload.ts_ms);
         var label = isFinite(ts)
-          ? new Date(ts).toLocaleTimeString("et-EE",{hour12:false})
-          : new Date().toLocaleTimeString("et-EE",{hour12:false});
+          ? new Date(ts).toLocaleTimeString("en-GB",{hour12:false})
+          : new Date().toLocaleTimeString("en-GB",{hour12:false});
 
         data.labels.push(label);
         data.datasets[0].data.push(Number(payload.pressure_now));
@@ -335,7 +332,6 @@
         chart.update("none");
       };
 
-      // init chart once DOM is ready (in case fragment is injected)
       if (document.readyState === "loading"){
         document.addEventListener("DOMContentLoaded", initChartIfPossible);
       } else {

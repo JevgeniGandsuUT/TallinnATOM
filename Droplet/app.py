@@ -1,10 +1,12 @@
+# app.py
 import os
 import json
 import time
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, render_template_string, jsonify, Response, abort
+from flask import Flask, render_template_string, jsonify, Response
 from influxdb_client import InfluxDBClient
 from dotenv import load_dotenv
 
@@ -22,13 +24,18 @@ PORT = int(os.getenv("PORT", "5000"))
 
 OFFLINE_SECONDS = int(os.getenv("OFFLINE_SECONDS", "120"))
 SSE_INTERVAL_MS = int(os.getenv("SSE_INTERVAL_MS", "2000"))
-INFLUX_RANGE = os.getenv("INFLUX_RANGE", "-10m")  # было -1h, но это иногда тормозит
+INFLUX_RANGE = os.getenv("INFLUX_RANGE", "-10m")
 INFLUX_TIMEOUT_MS = int(os.getenv("INFLUX_TIMEOUT_MS", "20000"))
 
-# Где лежат init-html фрагменты (listener должен туда писать)
+# Cache: prevents Influx from being hammered by multiple SSE clients/tabs
+CACHE_TTL_SEC = float(os.getenv("CACHE_TTL_SEC", "1.0"))
+_latest_cache = {"ts": 0.0, "data": None, "error": None}
+_cache_lock = threading.Lock()
+
+# Where listener saves init-html fragments (one file per device)
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = Path(os.getenv("DEVICE_TEMPLATES_DIR", str(BASE_DIR / "device_templates")))
-DEVICES_JSON_PATH = Path(os.getenv("DEVICES_JSON_PATH", str(BASE_DIR / "devices.json")))
+DEVICES_JSON_PATH = Path(os.getenv("DEVICES_JSON_PATH", str(BASE_DIR / "devices.json")))  # kept for future use
 
 app = Flask(__name__)
 
@@ -37,7 +44,6 @@ app = Flask(__name__)
 def influx_client():
     if not all([INFLUX_URL, INFLUX_TOKEN, INFLUX_ORG, INFLUX_BUCKET]):
         raise RuntimeError("InfluxDB config missing in .env")
-    # timeout в мс
     return InfluxDBClient(
         url=INFLUX_URL,
         token=INFLUX_TOKEN,
@@ -75,8 +81,8 @@ def has_init_template(uid: str) -> bool:
     return template_path_for(uid).exists()
 
 
-def load_latest_devices():
-    # last() вернёт последние значения по каждому series (device_id + field)
+def _load_latest_devices_from_influx():
+    # last() returns last per series (device_id + field)
     query = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {INFLUX_RANGE})
@@ -138,6 +144,28 @@ from(bucket: "{INFLUX_BUCKET}")
     return sorted(out, key=lambda x: x["device_id"])
 
 
+def load_latest_devices():
+    now = time.time()
+
+    with _cache_lock:
+        if _latest_cache["data"] is not None and (now - _latest_cache["ts"]) < CACHE_TTL_SEC:
+            return _latest_cache["data"]
+
+    try:
+        data = _load_latest_devices_from_influx()
+        with _cache_lock:
+            _latest_cache["ts"] = now
+            _latest_cache["data"] = data
+            _latest_cache["error"] = None
+        return data
+    except Exception as e:
+        with _cache_lock:
+            _latest_cache["error"] = str(e)
+            if _latest_cache["data"] is not None:
+                return _latest_cache["data"]
+        raise
+
+
 # ===================== ROUTES =====================
 @app.get("/health")
 def health():
@@ -153,35 +181,43 @@ def health():
             "range": INFLUX_RANGE,
             "timeout_ms": INFLUX_TIMEOUT_MS,
             "templates_dir": str(TEMPLATES_DIR),
+            "sse_interval_ms": SSE_INTERVAL_MS,
+            "cache_ttl_sec": CACHE_TTL_SEC,
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.get("/api/devices/latest")
+def api_devices_latest():
+    return jsonify({
+        "server_time_utc": utc_now().strftime("%Y-%m-%d %H:%M:%S"),
+        "devices": load_latest_devices()
+    })
 
 
 @app.get("/events/devices")
 def events_devices():
     """
     Server-Sent Events stream. Pushes device snapshot JSON.
-    IMPORTANT: generator runs inside app.app_context().
     """
     def gen():
-        with app.app_context():
-            yield "retry: 2000\n\n"
-            while True:
-                try:
-                    payload = {
-                        "server_time_utc": utc_now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "devices": load_latest_devices()
-                    }
-                    yield ": keepalive\n\n"
-                    yield "event: devices\n"
-                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                except Exception as e:
-                    err = {"error": str(e)}
-                    yield "event: error\n"
-                    yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+        yield "retry: 2000\n\n"
+        while True:
+            try:
+                payload = {
+                    "server_time_utc": utc_now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "devices": load_latest_devices()
+                }
+                yield ": keepalive\n\n"
+                yield "event: devices\n"
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                err = {"error": str(e)}
+                yield "event: error\n"
+                yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
 
-                time.sleep(max(0.3, SSE_INTERVAL_MS / 1000.0))
+            time.sleep(max(0.3, SSE_INTERVAL_MS / 1000.0))
 
     return Response(gen(), mimetype="text/event-stream", headers={
         "Cache-Control": "no-cache",
@@ -196,7 +232,7 @@ def index():
 
     html = r"""
 <!doctype html>
-<html lang="et">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -416,7 +452,7 @@ th:nth-child(6), td:nth-child(6){
           <th>Now</th>
           <th>Prev</th>
           <th>Δ</th>
-          <th>Last seen</th>
+          <th>Last seen (UTC)</th>
           <th>View</th>
         </tr>
       </thead>
@@ -573,10 +609,9 @@ th:nth-child(6), td:nth-child(6){
 def device_view(uid: str):
     p = template_path_for(uid)
     if not p.exists():
-        # Пока init не приехал/не сохранен listener'ом
         html = r"""
 <!doctype html>
-<html lang="et">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -613,12 +648,92 @@ a{ color:#8ab4ff; text-decoration:none; }
 """
         return render_template_string(html, uid=uid, path=str(p))
 
-    # Читаем init HTML как есть (это полный HTML документ)
-    # и просто отдаём. Твой init должен НЕ содержать demo setInterval.
-    return p.read_text(encoding="utf-8", errors="replace")
+    fragment = p.read_text(encoding="utf-8", errors="replace")
+
+    # Wrapper page:
+    # - loads Chart.js
+    # - injects fragment
+    # - subscribes to SSE and calls window.handleSensorUpdate(payload)
+    page = r"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ uid }} · Device</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <style>
+    body{
+      margin:0; padding:36px 14px;
+      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+      background:radial-gradient(circle at top,#0f172a 0,#020617 55%,#000 100%);
+      color:#e5e7eb;
+      display:flex; justify-content:center;
+    }
+    .wrap{ width:100%; max-width:980px; }
+    a{ color:#8ab4ff; text-decoration:none; }
+    .topbar{ margin-bottom:16px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+    .muted{ color:#94a3b8; font-size:12px; letter-spacing:.14em; text-transform:uppercase; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <a href="/">← back</a>
+      <div class="muted">Device: <span id="uid">{{ uid }}</span></div>
+      <div class="muted" id="conn">connecting…</div>
+    </div>
+
+    {{ fragment | safe }}
+  </div>
+
+<script>
+(function(){
+  const uid = {{ uid|tojson }};
+  const conn = document.getElementById("conn");
+
+  function pickDevice(snapshot){
+    const list = snapshot && snapshot.devices ? snapshot.devices : [];
+    return list.find(d => d.device_id === uid);
+  }
+
+  function pushToFragment(d){
+    if (!d) return;
+    if (typeof window.handleSensorUpdate !== "function") return;
+
+    window.handleSensorUpdate({
+      uid: d.device_id,
+      ts_ms: d.time_ms,
+      valve_state: d.valve_state,
+      pressure_prev: d.pressure_prev,
+      pressure_now: d.pressure_now
+    });
+  }
+
+  const es = new EventSource("/events/devices");
+
+  es.onopen = () => { if (conn) conn.textContent = "connected"; };
+  es.onerror = () => { if (conn) conn.textContent = "reconnecting…"; };
+
+  es.addEventListener("devices", (evt) => {
+    try{
+      const snapshot = JSON.parse(evt.data);
+      const d = pickDevice(snapshot);
+      pushToFragment(d);
+    }catch(e){}
+  });
+})();
+</script>
+</body>
+</html>
+"""
+    return render_template_string(page, uid=uid, fragment=fragment)
 
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    # threaded важно для SSE
+    # threaded is important for SSE
     app.run(host="0.0.0.0", port=PORT, threaded=True, use_reloader=False)
