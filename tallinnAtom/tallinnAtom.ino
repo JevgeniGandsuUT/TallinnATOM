@@ -26,7 +26,7 @@ int pinSolenoid = 26;
 int pinSensorBar = 32;  // GPIO32 is ADC1_CH4
 double lastBar = 0.0;
 unsigned long lastSensorReadMs = 0;
-const uint32_t SENSOR_INTERVAL_MS = 250;   
+const uint32_t SENSOR_INTERVAL_MS = 500;   
 
 // =================== Lab3 Buffer (last 100) + ACK ===================
 String deviceId = "ESP32_TallinnAtom_01";
@@ -36,7 +36,7 @@ PubSubClient mqtt(wifiClient);
 String topicStatus; // sensors/<deviceId>/status
 String topicInit; // sensors/<deviceId>/init
 unsigned long lastPublishMs = 0;
-const uint32_t PUBLISH_INTERVAL_MS = 250; // ms
+const uint32_t PUBLISH_INTERVAL_MS = 500; // ms
 const char* MQTT_HOST = "10.8.0.1";   // broker (droplet / VPN)
 const int   MQTT_PORT = 1883;
 
@@ -214,7 +214,7 @@ void setup() {
   Serial.println("HTTP server started");
   topicStatus = "sensors/" + deviceId + "/status";
   topicInit  = "sensors/" + deviceId + "/init";
-  mqtt.setBufferSize(16384);   // если твоя PubSubClient поддерживает
+  mqtt.setBufferSize(22000);   // если твоя PubSubClient поддерживает
   Serial.printf("[MQTT] buffer size=%d\n", mqtt.getBufferSize());
   ensureMQTT();
 }

@@ -25,7 +25,7 @@ PORT = int(os.getenv("PORT", "5000"))
 OFFLINE_SECONDS = int(os.getenv("OFFLINE_SECONDS", "15"))
 SSE_INTERVAL_MS = int(os.getenv("SSE_INTERVAL_MS", "2000"))
 INFLUX_RANGE = os.getenv("INFLUX_RANGE", "-10m")
-INFLUX_TIMEOUT_MS = int(os.getenv("INFLUX_TIMEOUT_MS", "20000"))
+INFLUX_TIMEOUT_MS = int(os.getenv("INFLUX_TIMEOUT_MS", "60000"))
 
 # Cache: prevents Influx from being hammered by multiple SSE clients/tabs
 CACHE_TTL_SEC = float(os.getenv("CACHE_TTL_SEC", "1.0"))
@@ -87,10 +87,10 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now")
+  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_value"])
   |> sort(columns: ["_time"], desc: false)
 """
-
     # 2) valve_state timeline (take last per time bucket to reduce spam)
     # We’ll sample every 10s (tweak if needed)
     q_valve = f"""
@@ -956,7 +956,7 @@ a{ color:#8ab4ff; text-decoration:none; }
   loadHistory();
 
   // optional: refresh history every 20s (keeps table/timeline sane)
-  setInterval(loadHistory, 20000);
+  //setInterval(loadHistory, 20000);
 
   es.addEventListener("devices", (evt) => {
     try{
