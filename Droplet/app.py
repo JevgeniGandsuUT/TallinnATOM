@@ -82,30 +82,17 @@ def _influx_query(query: str):
 
 def load_device_history(uid: str, hours: int = 24, limit_events: int = 50):
     """
-    Returns:
-      {
-        "uid": "...",
-        "hours": 24,
-        "pressure_points": [{"t": ms, "v": float}, ...],
-        "valve_points": [{"t": ms, "state": "open|closed|?"}, ...],
-        "events": [{"time_ms":..., "time_hm":..., "valve_state":..., "pressure_prev":..., "pressure_now":..., "delta":...}, ...]
-      }
-
-    FIX:
-      valve_state is a TAG => creates 2 series (open/closed).
-      We "glue" series via Flux group(columns:["device_id","_field"]).
-      Also pivot rowKey MUST NOT include valve_state.
+    ONLY switch events (valve_state changes)
     """
-    # safety limits
-    hours = max(1, min(int(hours), 168))                # 1h..168h
-    limit_events = max(1, min(int(limit_events), 500)) # 1..500
+    hours = max(1, min(int(hours), 168))
+    limit_events = max(1, min(int(limit_events), 500))
 
     range_expr = f"-{hours}h"
 
-    # For test/dev we sample each 1s (instead of 10s). You can change to 2s/5s later.
+    # ⚠️ ключевой фикс: мельче окно, иначе last() сожрёт переключения
     WINDOW_EVERY = os.getenv("HISTORY_WINDOW_EVERY", "1s")
 
-    # 1) pressure_now series for chart
+    # 1) pressure_now for chart (можно оставить 10s если хочешь легче график)
     q_pressure = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -113,13 +100,13 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now")
-  |> group(columns: ["device_id","_field"])                   // FIX: glue open/closed series
-  |> aggregateWindow(every: {WINDOW_EVERY}, fn: last, createEmpty: false)
+  |> group(columns: ["device_id","_field"])
+  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_value"])
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # 2) valve_state timeline (we read valve_state TAG from pressure_now points)
+    # 2) valve timeline (1s)
     q_valve = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -127,13 +114,14 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now")
-  |> group(columns: ["device_id","_field"])                   // FIX: glue open/closed series
+  |> group(columns: ["device_id","_field"])
   |> aggregateWindow(every: {WINDOW_EVERY}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","valve_state"])
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # 3) switch events table (pressure_prev/30ms_ago + pressure_now + valve_state)
+    # 3) events stream: pressure_now + prev in 1s window, потом python выберет только смену valve_state
+    #    ВАЖНО: pivot rowKey только по _time (НЕ valve_state), иначе будут разные строки на один таймстемп
     q_events = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -141,10 +129,10 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now" or r._field == "pressure_prev" or r._field == "pressure_30ms_ago")
-  |> group(columns: ["device_id","_field"])                   // FIX: glue open/closed series
+  |> group(columns: ["device_id","_field"])
   |> aggregateWindow(every: {WINDOW_EVERY}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_field","_value","valve_state"])
-  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")  // FIX: rowKey without valve_state
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"], desc: false)
 """
 
@@ -167,25 +155,19 @@ from(bucket: "{INFLUX_BUCKET}")
             ts = r.get_time()
             if not ts:
                 continue
-            st = (r.values.get("valve_state") or "").lower()
-            if st in ("lahti", "open", "opened", "on", "1", "true"):
-                st = "open"
-            elif st in ("kinni", "closed", "off", "0", "false"):
-                st = "closed"
-            else:
-                st = st or "?"
+            st = _norm_valve_state(r.values.get("valve_state"))
             t_ms = int(ts.astimezone(timezone.utc).timestamp() * 1000)
             valve_points.append({"t": t_ms, "state": st})
 
-    # dedupe consecutive same state
-    vp = []
-    last = None
+    # dedupe timeline
+    vp, last = [], None
     for p in valve_points:
         if p["state"] != last:
             vp.append(p)
             last = p["state"]
     valve_points = vp
 
+    # events = только переключения
     events = []
     last_state = None
 
@@ -195,15 +177,9 @@ from(bucket: "{INFLUX_BUCKET}")
             if not ts:
                 continue
 
-            st = (r.values.get("valve_state") or "").lower()
-            if st in ("lahti", "open", "opened", "on", "1", "true"):
-                st = "open"
-            elif st in ("kinni", "closed", "off", "0", "false"):
-                st = "closed"
-            else:
-                st = st or "?"
+            st = _norm_valve_state(r.values.get("valve_state"))
 
-            # keep only state changes (switch events)
+            # ✅ только смена состояния
             if last_state is not None and st == last_state:
                 continue
             last_state = st
@@ -228,7 +204,7 @@ from(bucket: "{INFLUX_BUCKET}")
                 "delta": delta
             })
 
-    # keep last N events (newest at top for UI)
+    # оставим последние N переключений, сверху новые
     if len(events) > limit_events:
         events = events[-limit_events:]
     events = list(reversed(events))
@@ -240,6 +216,15 @@ from(bucket: "{INFLUX_BUCKET}")
         "valve_points": valve_points,
         "events": events
     }
+
+def _norm_valve_state(st) -> str:
+    st = (st or "").lower()
+    if st in ("lahti", "open", "opened", "on", "1", "true"):
+        return "open"
+    if st in ("kinni", "closed", "off", "0", "false"):
+        return "closed"
+    return st or "?"
+
 
 
 def template_path_for(uid: str) -> Path:
