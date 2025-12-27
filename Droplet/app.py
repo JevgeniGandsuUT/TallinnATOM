@@ -113,10 +113,10 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now" or r._field == "pressure_prev" or r._field == "pressure_30ms_ago")
+  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_field","_value","valve_state"])
-  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-  |> sort(columns: ["_time"], desc: true)
-  |> limit(n: {limit_events})
+  |> pivot(rowKey: ["_time","valve_state"], columnKey: ["_field"], valueColumn: "_value")
+  |> sort(columns: ["_time"], desc: false)
 """
 
     # ---- execute ----
@@ -157,11 +157,27 @@ from(bucket: "{INFLUX_BUCKET}")
     valve_points = vp
 
     events = []
+    last_state = None
+
     for t in _influx_query(q_events):
         for r in t.records:
             ts = r.get_time()
             if not ts:
                 continue
+
+            st = (r.values.get("valve_state") or "").lower()
+            if st in ("lahti", "open", "opened", "on"):
+                st = "open"
+            elif st in ("kinni", "closed", "off"):
+                st = "closed"
+            else:
+                st = st or "?"
+
+            # только смена состояния
+            if last_state is not None and st == last_state:
+                continue
+            last_state = st
+
             p_now = fmt_float(r.values.get("pressure_now"))
             p_prev = r.values.get("pressure_prev")
             if p_prev is None:
@@ -172,29 +188,23 @@ from(bucket: "{INFLUX_BUCKET}")
             if p_now is not None and p_prev is not None:
                 delta = p_now - p_prev
 
-            st = (r.values.get("valve_state") or "").lower()
-            if st in ("lahti", "open", "opened", "on"):
-                st = "open"
-            elif st in ("kinni", "closed", "off"):
-                st = "closed"
-
+            t_utc = ts.astimezone(timezone.utc)
             events.append({
-                "time_ms": int(ts.astimezone(timezone.utc).timestamp() * 1000),
-                "time_hm": ts.astimezone(timezone.utc).strftime("%H:%M:%S"),
+                "time_ms": int(t_utc.timestamp() * 1000),
+                "time_hm": t_utc.strftime("%H:%M:%S"),
                 "valve_state": st,
                 "pressure_prev": p_prev,
                 "pressure_now": p_now,
                 "delta": delta
             })
 
-    return {
-        "uid": uid,
-        "hours": hours,
-        "pressure_points": pressure_points,
-        "valve_points": valve_points,
-        "events": events
-    }
- 
+    # показываем последние 50 переключений (если их больше)
+    if len(events) > limit_events:
+        events = events[-limit_events:]
+    # для UI "last 50" обычно сверху новые
+    events = list(reversed(events))
+
+    
 def template_path_for(uid: str) -> Path:
     safe = "".join(ch for ch in uid if ch.isalnum() or ch in ("_", "-", "."))
     return TEMPLATES_DIR / f"{safe}.html"
