@@ -91,14 +91,27 @@ def load_device_history(uid: str, hours: int = 24, limit_events: int = 50):
         "events": [{"time_ms":..., "time_hm":..., "valve_state":..., "pressure_prev":..., "pressure_now":..., "delta":...}, ...]
       }
     """
-    hours = max(1, min(int(hours), 168))               # 1h..168h
-    limit_events = max(1, min(int(limit_events), 500))  # 1..500
+
+    # ===== hardcoded windows (NO ENV) =====
+    WIN_CHART = "10s"   # chart smoothing
+    WIN_EVENTS = "1s"   # keep valve flips
+    # =====================================
+
+    # safety limits
+    hours = max(1, min(int(hours), 168))                # 1h..168h
+    limit_events = max(1, min(int(limit_events), 500)) # 1..500
     range_expr = f"-{hours}h"
 
-    win_events = HISTORY_WINDOW_EVERY
-    win_chart = HISTORY_CHART_EVERY
+    def norm_valve(v) -> str:
+        s = (v or "").strip().lower()
+        if s in ("lahti", "open", "opened", "on", "1", "true"):
+            return "open"
+        if s in ("kinni", "closed", "off", "0", "false"):
+            return "closed"
+        return s or "?"
 
-    # 1) pressure_now series for chart (we merge valve_state here on purpose)
+    # 1) pressure_now series for chart
+    # (group OK here, because we only need _time/_value)
     q_pressure = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -107,13 +120,12 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now")
   |> group(columns: ["device_id","_field"])
-  |> aggregateWindow(every: {win_chart}, fn: last, createEmpty: false)
+  |> aggregateWindow(every: {WIN_CHART}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_value"])
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # 2) valve_state timeline
-    # IMPORTANT: NO group() here — иначе valve_state пропадает/становится null
+    # 2) valve timeline (IMPORTANT: NO group() !)
     q_valve = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -121,13 +133,14 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now")
-  |> aggregateWindow(every: {win_events}, fn: last, createEmpty: false)
+  |> aggregateWindow(every: {WIN_EVENTS}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","valve_state"])
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # 3) events: keep only switch moments (open/closed flips)
-    # IMPORTANT: NO group() here — pivot uses valve_state properly
+    # 3) events data (pressure_now + pressure_prev/pressure_30ms_ago) with valve_state,
+    # then we keep ONLY flip moments in python.
+    # IMPORTANT: NO group() here.
     q_events = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -135,7 +148,7 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now" or r._field == "pressure_prev" or r._field == "pressure_30ms_ago")
-  |> aggregateWindow(every: {win_events}, fn: last, createEmpty: false)
+  |> aggregateWindow(every: {WIN_EVENTS}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_field","_value","valve_state"])
   |> pivot(rowKey: ["_time","valve_state"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"], desc: false)
@@ -154,17 +167,18 @@ from(bucket: "{INFLUX_BUCKET}")
             t_ms = int(ts.astimezone(timezone.utc).timestamp() * 1000)
             pressure_points.append({"t": t_ms, "v": v})
 
+    # valve timeline points
     valve_points = []
     for t in _influx_query(q_valve):
         for r in t.records:
             ts = r.get_time()
             if not ts:
                 continue
-            st = _norm_valve_state(r.values.get("valve_state"))
+            st = norm_valve(r.values.get("valve_state"))
             t_ms = int(ts.astimezone(timezone.utc).timestamp() * 1000)
             valve_points.append({"t": t_ms, "state": st})
 
-    # dedupe consecutive same state (for nicer timeline)
+    # dedupe consecutive states (so timeline segments make sense)
     vp = []
     last = None
     for p in valve_points:
@@ -173,6 +187,7 @@ from(bucket: "{INFLUX_BUCKET}")
             last = p["state"]
     valve_points = vp
 
+    # events: ONLY flips
     events = []
     last_state = None
 
@@ -182,7 +197,7 @@ from(bucket: "{INFLUX_BUCKET}")
             if not ts:
                 continue
 
-            st = _norm_valve_state(r.values.get("valve_state"))
+            st = norm_valve(r.values.get("valve_state"))
 
             # keep only flips
             if last_state is not None and st == last_state:
@@ -209,7 +224,7 @@ from(bucket: "{INFLUX_BUCKET}")
                 "delta": delta
             })
 
-    # keep last N (newest at top for UI)
+    # keep last N events, newest first
     if len(events) > limit_events:
         events = events[-limit_events:]
     events = list(reversed(events))
@@ -220,15 +235,15 @@ from(bucket: "{INFLUX_BUCKET}")
         "pressure_points": pressure_points,
         "valve_points": valve_points,
         "events": events,
-        # debug counters (полезно в UI/console)
         "counts": {
             "pressure_points": len(pressure_points),
             "valve_points": len(valve_points),
             "events": len(events),
-            "win_events": win_events,
-            "win_chart": win_chart,
+            "win_events": WIN_EVENTS,
+            "win_chart": WIN_CHART,
         }
     }
+
 
 def _norm_valve_state(st) -> str:
     st = (st or "").lower()
