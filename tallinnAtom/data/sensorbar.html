@@ -1,196 +1,166 @@
-<!-- sensorbar.html (English labels) -->
-<!-- TallinnAtom device init fragment (safe to embed) -->
 <div id="ta-root">
   <style>
-    /* Scope EVERYTHING into #ta-root so it won't break the outer Flask page */
     #ta-root * { box-sizing: border-box; }
+    #ta-root{ width:100%; display:flex; flex-direction:column; gap:24px; align-items:center; }
 
-    #ta-root{
+    #ta-root .card, #ta-root .chart-card, #ta-root .table-card{
+      position:relative; background:#020617; border-radius:26px;
       width:100%;
-      display:flex;
-      flex-direction:column;
-      gap:24px;
-      align-items:center;
-    }
-
-    #ta-root .card{
-      position:relative;
-      background:#020617;
-      border-radius:26px;
-      padding:32px 40px;
-      width:100%;
-      max-width:720px;
-      box-shadow:
-        0 0 0 1px rgba(15,23,42,0.9),
-        0 35px 120px rgba(15,23,42,0.95);
+      box-shadow:0 0 0 1px rgba(15,23,42,0.9), 0 35px 120px rgba(15,23,42,0.95);
       overflow:hidden;
     }
+    #ta-root .card{ padding:32px 40px; max-width:720px; }
+    #ta-root .chart-card{ padding:24px 30px 30px 30px; max-width:900px; }
+    #ta-root .table-card{ padding:22px 22px 18px 22px; max-width:900px; }
 
     #ta-root .card::before{
-      content:"";
-      position:absolute;
-      inset:-2px;
-      border-radius:30px;
-      background:conic-gradient(
-        from 140deg,
-        rgba(56,189,248,0.0),
-        rgba(56,189,248,0.65),
-        rgba(129,140,248,0.8),
-        rgba(56,189,248,0.0)
+      content:""; position:absolute; inset:-2px; border-radius:30px;
+      background:conic-gradient(from 140deg,
+        rgba(56,189,248,0.0), rgba(56,189,248,0.65), rgba(129,140,248,0.8), rgba(56,189,248,0.0)
       );
-      opacity:0.35;
-      z-index:0;
-      filter:blur(12px);
+      opacity:0.35; z-index:0; filter:blur(12px);
+    }
+    #ta-root .chart-card::before{
+      content:""; position:absolute; inset:-2px; border-radius:30px;
+      background:conic-gradient(from 320deg,
+        rgba(56,189,248,0.0), rgba(56,189,248,0.6), rgba(52,211,153,0.7), rgba(56,189,248,0.0)
+      );
+      opacity:0.25; z-index:0; filter:blur(14px);
+    }
+    #ta-root .table-card::before{
+      content:""; position:absolute; inset:-2px; border-radius:30px;
+      background:conic-gradient(from 220deg,
+        rgba(56,189,248,0.0), rgba(129,140,248,0.55), rgba(56,189,248,0.0)
+      );
+      opacity:0.18; z-index:0; filter:blur(14px);
     }
 
-    #ta-root .inner{
-      position:relative;
-      z-index:1;
-    }
+    #ta-root .inner, #ta-root .chart-inner, #ta-root .table-inner{ position:relative; z-index:1; }
 
     #ta-root .title{
-      font-size:28px;
-      font-weight:700;
-      letter-spacing:0.05em;
-      text-transform:uppercase;
-      margin-bottom:6px;
-      background:linear-gradient(120deg,#60a5fa,#a855f7,#22d3ee);
-      -webkit-background-clip:text;
-      color:transparent;
+      font-size:28px; font-weight:700; letter-spacing:0.05em; text-transform:uppercase;
+      margin-bottom:6px; background:linear-gradient(120deg,#60a5fa,#a855f7,#22d3ee);
+      -webkit-background-clip:text; color:transparent;
     }
-
     #ta-root .subtitle{
-      font-size:13px;
-      color:#94a3b8;
-      margin-bottom:22px;
-      text-transform:uppercase;
-      letter-spacing:0.16em;
+      font-size:13px; color:#94a3b8; margin-bottom:22px; text-transform:uppercase; letter-spacing:0.16em;
+      display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    }
+    #ta-root .pill-mini{
+      display:inline-block; padding:4px 10px; border-radius:999px;
+      background:rgba(15,23,42,0.9); border:1px solid rgba(30,64,175,0.35);
+      font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:#a5b4fc;
+      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
     }
 
     #ta-root .row{
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      gap:14px;
-      padding:10px 0;
-      border-bottom:1px solid rgba(30,64,175,0.35);
-      font-size:15px;
+      display:flex; justify-content:space-between; align-items:center;
+      gap:14px; padding:10px 0; border-bottom:1px solid rgba(30,64,175,0.35); font-size:15px;
     }
     #ta-root .row:last-child{ border-bottom:none; }
 
     #ta-root .label{
-      color:#9ca3af;
-      text-transform:uppercase;
-      letter-spacing:0.12em;
-      font-size:12px;
-      flex:1;
-      min-width:160px;
+      color:#9ca3af; text-transform:uppercase; letter-spacing:0.12em;
+      font-size:12px; flex:1; min-width:160px;
     }
 
     #ta-root .value{
       font-family:"JetBrains Mono","Fira Code",Consolas,monospace;
-      font-size:16px;
-      font-weight:500;
-      color:#e5e7eb;
-      padding:4px 10px;
-      min-width:170px;
-      text-align:right;
-      border-radius:999px;
-      background:rgba(15,23,42,0.9);
+      font-size:16px; font-weight:500; color:#e5e7eb;
+      padding:4px 10px; min-width:170px; text-align:right;
+      border-radius:999px; background:rgba(15,23,42,0.9);
       box-shadow:0 0 14px rgba(37,99,235,0.45);
-      transition:background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+      transition:background-color .2s ease, box-shadow .2s ease, transform .2s ease;
       white-space:nowrap;
     }
-
-    #ta-root .value.placeholder{
-      color:#6b7280;
-      box-shadow:none;
-    }
-
-    /* ALARM: pressure_now > 5 bar */
+    #ta-root .value.placeholder{ color:#6b7280; box-shadow:none; }
     #ta-root .value.alarm{
-      background:rgba(127,29,29,0.96);
-      color:#fee2e2;
+      background:rgba(127,29,29,0.96); color:#fee2e2;
       box-shadow:0 0 22px rgba(248,113,113,0.95);
-      animation:taAlarmPulse 0.8s ease-in-out infinite;
+      animation:taAlarmPulse .8s ease-in-out infinite;
     }
-
     @keyframes taAlarmPulse{
       0%{ transform:scale(1); box-shadow:0 0 16px rgba(248,113,113,0.7); }
       50%{ transform:scale(1.05); box-shadow:0 0 30px rgba(248,113,113,1); }
       100%{ transform:scale(1); box-shadow:0 0 16px rgba(248,113,113,0.7); }
     }
 
-    #ta-root .chart-card{
-      position:relative;
-      background:#020617;
-      border-radius:26px;
-      padding:24px 30px 30px 30px;
-      width:100%;
-      max-width:900px;
-      box-shadow:
-        0 0 0 1px rgba(15,23,42,0.9),
-        0 35px 120px rgba(15,23,42,0.95);
-      overflow:hidden;
-    }
-
-    #ta-root .chart-card::before{
-      content:"";
-      position:absolute;
-      inset:-2px;
-      border-radius:30px;
-      background:conic-gradient(
-        from 320deg,
-        rgba(56,189,248,0.0),
-        rgba(56,189,248,0.6),
-        rgba(52,211,153,0.7),
-        rgba(56,189,248,0.0)
-      );
-      opacity:0.25;
-      z-index:0;
-      filter:blur(14px);
-    }
-
-    #ta-root .chart-inner{ position:relative; z-index:1; }
-
     #ta-root .chart-title{
-      font-size:16px;
-      font-weight:600;
-      letter-spacing:0.08em;
-      text-transform:uppercase;
-      margin-bottom:4px;
-      color:#a5b4fc;
+      font-size:16px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase;
+      margin-bottom:4px; color:#a5b4fc;
     }
-
     #ta-root .chart-subtitle{
-      font-size:12px;
-      color:#64748b;
-      margin-bottom:16px;
-      letter-spacing:0.16em;
-      text-transform:uppercase;
+      font-size:12px; color:#64748b; margin-bottom:12px; letter-spacing:0.16em;
+      text-transform:uppercase; display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    }
+    #ta-root .chart-wrapper{ position:relative; width:100%; height:320px; }
+
+    /* Valve timeline */
+    #ta-root .timeline{
+      margin-top:10px;
+      width:100%;
+      background:rgba(15,23,42,0.7);
+      border:1px solid rgba(30,64,175,0.35);
+      border-radius:14px;
+      padding:10px;
+    }
+    #ta-root .timeline-title{
+      font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+      color:#94a3b8; margin-bottom:10px;
+    }
+    #ta-root .bars{
+      display:flex; gap:6px; align-items:stretch;
+    }
+    #ta-root .seg{
+      flex:1;
+      height:16px;
+      border-radius:8px;
+      border:1px solid rgba(30,64,175,0.25);
+      background:rgba(51,65,85,0.45);
+    }
+    #ta-root .seg.open{
+      background:rgba(52,211,153,0.25);
+      border-color:rgba(52,211,153,0.35);
+    }
+    #ta-root .seg.closed{
+      background:rgba(148,163,184,0.18);
+      border-color:rgba(148,163,184,0.22);
     }
 
-    #ta-root .chart-wrapper{
-      position:relative;
-      width:100%;
-      height:320px;
+    /* Events table */
+    #ta-root table{ width:100%; border-collapse:collapse; table-layout:fixed; }
+    #ta-root th, #ta-root td{
+      padding:10px 10px;
+      border-bottom:1px solid rgba(30,64,175,0.25);
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      font-size:13px;
     }
+    #ta-root th{
+      color:#a5b4fc; font-size:11px; text-transform:uppercase; letter-spacing:.14em;
+      text-align:left;
+    }
+    #ta-root .mono{ font-family:"JetBrains Mono","Fira Code",Consolas,monospace; font-variant-numeric:tabular-nums; }
+    #ta-root .delta-pos{ color:#86efac; }
+    #ta-root .delta-neg{ color:#fca5a5; }
+
+    #ta-root .actions{
+      display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+      margin-top:14px;
+    }
+    #ta-root .btn{
+      display:inline-block; padding:8px 12px; border-radius:999px;
+      background:rgba(15,23,42,0.9);
+      border:1px solid rgba(30,64,175,0.35);
+      color:#e5e7eb; text-decoration:none;
+      font-size:12px; letter-spacing:.12em; text-transform:uppercase;
+    }
+    #ta-root .btn:hover{ border-color: rgba(56,189,248,.65); }
 
     @media (max-width:640px){
-      #ta-root .card,
-      #ta-root .chart-card{
-        padding:24px 18px;
-      }
-      #ta-root .value{
-        min-width:130px;
-        font-size:14px;
-      }
-      #ta-root .label{
-        min-width:120px;
-      }
-      #ta-root .chart-wrapper{
-        height:260px;
-      }
+      #ta-root .card, #ta-root .chart-card, #ta-root .table-card{ padding:20px 16px; }
+      #ta-root .value{ min-width:130px; font-size:14px; }
+      #ta-root .label{ min-width:120px; }
+      #ta-root .chart-wrapper{ height:260px; }
     }
   </style>
 
@@ -198,46 +168,70 @@
   <div class="card">
     <div class="inner">
       <div class="title">Device status</div>
-      <div class="subtitle">Data updates via MQTT messages</div>
-
-      <div class="row">
-        <div class="label">Device ID</div>
-        <div class="value placeholder" id="ta-device-uid">---</div>
+      <div class="subtitle">
+        <span>Data updates via MQTT messages</span>
+        <span class="pill-mini" id="ta-mode-pill">history+realtime</span>
       </div>
 
-      <div class="row">
-        <div class="label">Timestamp (ms)</div>
-        <div class="value placeholder" id="ta-ts-ms">---</div>
-      </div>
-
-      <div class="row">
-        <div class="label">Valve state</div>
-        <div class="value placeholder" id="ta-valve-state">---</div>
-      </div>
-
-      <div class="row">
-        <div class="label">Pressure 30 ms ago</div>
-        <div class="value placeholder" id="ta-pressure-prev">---</div>
-      </div>
-
-      <div class="row">
-        <div class="label">Pressure now</div>
-        <div class="value placeholder" id="ta-pressure-now">---</div>
-      </div>
+      <div class="row"><div class="label">Device ID</div><div class="value placeholder" id="ta-device-uid">---</div></div>
+      <div class="row"><div class="label">Timestamp (ms)</div><div class="value placeholder" id="ta-ts-ms">---</div></div>
+      <div class="row"><div class="label">Valve state</div><div class="value placeholder" id="ta-valve-state">---</div></div>
+      <div class="row"><div class="label">Pressure 30 ms ago</div><div class="value placeholder" id="ta-pressure-prev">---</div></div>
+      <div class="row"><div class="label">Pressure now</div><div class="value placeholder" id="ta-pressure-now">---</div></div>
     </div>
   </div>
 
-  <!-- CHART -->
+  <!-- ONE CHART -->
   <div class="chart-card">
     <div class="chart-inner">
-      <div class="chart-title">REAL-TIME PRESSURE CHART</div>
-      <div class="chart-subtitle">pressure_now · 5 bar alarm line</div>
+      <div class="chart-title">Pressure (last 24h + realtime)</div>
+      <div class="chart-subtitle">
+        <span>pressure_now</span>
+        <span>·</span>
+        <span>alarm > 5 bar</span>
+      </div>
+
       <div class="chart-wrapper">
         <canvas id="ta-pressureChart"></canvas>
       </div>
 
       <div id="ta-chart-missing" style="display:none; margin-top:12px; color:#94a3b8; font-size:12px;">
         Chart.js is not loaded on this page.
+      </div>
+
+      <!-- Valve timeline -->
+      <div class="timeline">
+        <div class="timeline-title">Valve state timeline (sampled)</div>
+        <div class="bars" id="ta-valve-bars"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Events + export -->
+  <div class="table-card">
+    <div class="table-inner">
+      <div class="chart-title">Events log (last 50)</div>
+      <div class="chart-subtitle"><span class="mono">time · valve · p_prev · p_now · Δ</span></div>
+
+      <div style="overflow:hidden; border-radius:16px; border:1px solid rgba(30,64,175,.25);">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:90px;">Time</th>
+              <th style="width:90px;">Valve</th>
+              <th>Pressure 30ms</th>
+              <th>Pressure now</th>
+              <th style="width:110px;">Δ</th>
+            </tr>
+          </thead>
+          <tbody id="ta-events-body"></tbody>
+        </table>
+      </div>
+
+      <div class="actions">
+        <a class="btn" id="ta-export-csv" href="#" download>Export CSV</a>
+        <a class="btn" id="ta-export-json" href="#" download>Export JSON</a>
+        <span style="color:#94a3b8; font-size:12px;">(last 24h)</span>
       </div>
     </div>
   </div>
@@ -251,9 +245,16 @@
         el.classList.remove("placeholder");
       }
 
+      function fmt3(v){
+        if (v === null || v === undefined) return "---";
+        var n = Number(v);
+        if (!isFinite(n)) return "---";
+        return n.toFixed(3);
+      }
+
       var chart = null;
       var data = null;
-      var MAX_POINTS = 120;
+      var MAX_POINTS = 1200; // bigger because 24h can have more points; Chart.js can handle, but don't go crazy.
 
       function initChartIfPossible(){
         var canvas = document.getElementById("ta-pressureChart");
@@ -284,9 +285,7 @@
             responsive: true,
             maintainAspectRatio: false,
             animation: { duration: 150 },
-            plugins: {
-              legend: { display: true }
-            },
+            plugins: { legend: { display: true } },
             interaction: { mode: "index", intersect: false },
             scales: {
               x: { ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 12 } },
@@ -296,40 +295,161 @@
         });
       }
 
-      // payload = { uid, ts_ms, valve_state, pressure_prev, pressure_now }
-      window.handleSensorUpdate = function(payload){
-        if (!payload) return;
+      function setAlarm(pNow){
+        var el = document.getElementById("ta-pressure-now");
+        if (!el) return;
+        var p = parseFloat(pNow);
+        if (!isNaN(p) && p > 5) el.classList.add("alarm");
+        else el.classList.remove("alarm");
+      }
 
-        setValue("ta-device-uid", payload.uid ?? "---");
-        setValue("ta-ts-ms", payload.ts_ms ?? "---");
-        setValue("ta-valve-state", payload.valve_state ?? "---");
-        setValue("ta-pressure-prev", payload.pressure_prev ?? "---");
-        setValue("ta-pressure-now", payload.pressure_now ?? "---");
-
-        // Alarm > 5
-        var pressureNowEl = document.getElementById("ta-pressure-now");
-        var p = parseFloat(payload.pressure_now);
-        if (pressureNowEl){
-          if (!isNaN(p) && p > 5) pressureNowEl.classList.add("alarm");
-          else pressureNowEl.classList.remove("alarm");
-        }
-
-        // Chart update
+      function addPoint(ts_ms, pressure_now){
         if (!chart || !data) return;
 
-        var ts = Number(payload.ts_ms);
+        var ts = Number(ts_ms);
         var label = isFinite(ts)
           ? new Date(ts).toLocaleTimeString("en-GB",{hour12:false})
           : new Date().toLocaleTimeString("en-GB",{hour12:false});
 
         data.labels.push(label);
-        data.datasets[0].data.push(Number(payload.pressure_now));
+        data.datasets[0].data.push(Number(pressure_now));
 
         if (data.labels.length > MAX_POINTS){
           data.labels.shift();
           data.datasets[0].data.shift();
         }
         chart.update("none");
+      }
+
+      function resetSeries(points){
+        if (!chart || !data) return;
+        data.labels.length = 0;
+        data.datasets[0].data.length = 0;
+
+        for (var i=0;i<points.length;i++){
+          addPoint(points[i].t, points[i].v);
+        }
+      }
+
+      function renderValveTimeline(points){
+        var root = document.getElementById("ta-valve-bars");
+        if (!root) return;
+        root.innerHTML = "";
+
+        // show up to 40 segments max, compress if too many
+        var MAX_SEGS = 40;
+        var src = points || [];
+        if (src.length === 0){
+          // placeholder
+          for (var k=0;k<20;k++){
+            var d = document.createElement("div");
+            d.className = "seg";
+            root.appendChild(d);
+          }
+          return;
+        }
+
+        // compress by skipping
+        var step = Math.max(1, Math.floor(src.length / MAX_SEGS));
+        var segs = [];
+        for (var i=0;i<src.length;i+=step){
+          segs.push(src[i]);
+        }
+
+        for (var j=0;j<segs.length;j++){
+          var st = (segs[j].state || "").toLowerCase();
+          var d = document.createElement("div");
+          d.className = "seg " + (st === "open" ? "open" : (st === "closed" ? "closed" : ""));
+          root.appendChild(d);
+        }
+      }
+
+      function renderEventsTable(events){
+        var body = document.getElementById("ta-events-body");
+        if (!body) return;
+        body.innerHTML = "";
+
+        var list = events || [];
+        for (var i=0;i<list.length;i++){
+          var e = list[i];
+          var tr = document.createElement("tr");
+
+          var tdTime = document.createElement("td");
+          tdTime.className = "mono";
+          tdTime.textContent = e.time_hm || "-";
+
+          var tdValve = document.createElement("td");
+          tdValve.className = "mono";
+          tdValve.textContent = (e.valve_state || "-");
+
+          var tdPrev = document.createElement("td");
+          tdPrev.className = "mono";
+          tdPrev.textContent = fmt3(e.pressure_prev);
+
+          var tdNow = document.createElement("td");
+          tdNow.className = "mono";
+          tdNow.textContent = fmt3(e.pressure_now);
+
+          var tdDelta = document.createElement("td");
+          tdDelta.className = "mono";
+          var d = e.delta;
+          if (d === null || d === undefined || !isFinite(Number(d))){
+            tdDelta.textContent = "-";
+          } else {
+            var dn = Number(d);
+            tdDelta.textContent = (dn >= 0 ? "+" : "") + dn.toFixed(3);
+            tdDelta.classList.add(dn >= 0 ? "delta-pos" : "delta-neg");
+          }
+
+          tr.appendChild(tdTime);
+          tr.appendChild(tdValve);
+          tr.appendChild(tdPrev);
+          tr.appendChild(tdNow);
+          tr.appendChild(tdDelta);
+          body.appendChild(tr);
+        }
+      }
+
+      function updateExportLinks(uid){
+        var csv = document.getElementById("ta-export-csv");
+        var jsn = document.getElementById("ta-export-json");
+        if (csv) csv.href = `/api/export?uid=${encodeURIComponent(uid)}&hours=24&format=csv`;
+        if (jsn) jsn.href = `/api/export?uid=${encodeURIComponent(uid)}&hours=24&format=json`;
+      }
+
+      // called once (24h snapshot)
+      window.handleHistorySnapshot = function(snapshot){
+        if (!snapshot) return;
+
+        var uid = snapshot.uid || "---";
+        updateExportLinks(uid);
+
+        var points = snapshot.pressure_points || [];
+        // points: [{t,v}] sorted by server (we did sort)
+        if (points.length > 0 && chart && data){
+          resetSeries(points);
+        }
+
+        renderValveTimeline(snapshot.valve_points || []);
+        renderEventsTable(snapshot.events || []);
+      };
+
+      // realtime payload = { uid, ts_ms, valve_state, pressure_prev, pressure_now }
+      window.handleSensorUpdate = function(payload){
+        if (!payload) return;
+
+        setValue("ta-device-uid", payload.uid ?? "---");
+        setValue("ta-ts-ms", payload.ts_ms ?? "---");
+        setValue("ta-valve-state", payload.valve_state ?? "---");
+        setValue("ta-pressure-prev", fmt3(payload.pressure_prev));
+        setValue("ta-pressure-now", fmt3(payload.pressure_now));
+
+        setAlarm(payload.pressure_now);
+
+        updateExportLinks(payload.uid ?? "");
+
+        // append realtime point to the SAME chart
+        addPoint(payload.ts_ms, payload.pressure_now);
       };
 
       if (document.readyState === "loading"){

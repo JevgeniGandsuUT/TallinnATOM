@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, render_template_string, jsonify, Response
+from flask import Flask, render_template_string, jsonify, Response, request  
 from influxdb_client import InfluxDBClient
 from dotenv import load_dotenv
 
@@ -22,7 +22,7 @@ TEAM_FILTER = os.getenv("TEAM_FILTER", "TallinnAtom")
 MEASUREMENT = os.getenv("INFLUX_MEASUREMENT", "device_status")
 PORT = int(os.getenv("PORT", "5000"))
 
-OFFLINE_SECONDS = int(os.getenv("OFFLINE_SECONDS", "120"))
+OFFLINE_SECONDS = int(os.getenv("OFFLINE_SECONDS", "15"))
 SSE_INTERVAL_MS = int(os.getenv("SSE_INTERVAL_MS", "2000"))
 INFLUX_RANGE = os.getenv("INFLUX_RANGE", "-10m")
 INFLUX_TIMEOUT_MS = int(os.getenv("INFLUX_TIMEOUT_MS", "20000"))
@@ -71,7 +71,130 @@ def fmt_float(v):
     except Exception:
         return None
 
+def _influx_query(query: str):
+    with influx_client() as client:
+        return client.query_api().query(query)
 
+
+def load_device_history(uid: str, hours: int = 24, limit_events: int = 50):
+    range_expr = f"-{hours}h"
+
+    # 1) pressure_now series for chart (we keep one chart)
+    q_pressure = f"""
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: {range_expr})
+  |> filter(fn: (r) => r._measurement == "{MEASUREMENT}")
+  |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
+  |> filter(fn: (r) => r.device_id == "{uid}")
+  |> filter(fn: (r) => r._field == "pressure_now")
+  |> keep(columns: ["_time","_value"])
+  |> sort(columns: ["_time"], desc: false)
+"""
+
+    # 2) valve_state timeline (take last per time bucket to reduce spam)
+    # We’ll sample every 10s (tweak if needed)
+    q_valve = f"""
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: {range_expr})
+  |> filter(fn: (r) => r._measurement == "{MEASUREMENT}")
+  |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
+  |> filter(fn: (r) => r.device_id == "{uid}")
+  |> keep(columns: ["_time","valve_state"])
+  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)
+  |> keep(columns: ["_time","valve_state"])
+  |> sort(columns: ["_time"], desc: false)
+"""
+
+    # 3) last 50 events table (pressure_prev/30ms_ago + pressure_now + valve_state)
+    q_events = f"""
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: {range_expr})
+  |> filter(fn: (r) => r._measurement == "{MEASUREMENT}")
+  |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
+  |> filter(fn: (r) => r.device_id == "{uid}")
+  |> filter(fn: (r) => r._field == "pressure_now" or r._field == "pressure_prev" or r._field == "pressure_30ms_ago")
+  |> keep(columns: ["_time","_field","_value","valve_state"])
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> sort(columns: ["_time"], desc: true)
+  |> limit(n: {limit_events})
+"""
+
+    # ---- execute ----
+    pressure_points = []
+    for t in _influx_query(q_pressure):
+        for r in t.records:
+            ts = r.get_time()
+            if not ts:
+                continue
+            v = fmt_float(r.get_value())
+            if v is None:
+                continue
+            t_ms = int(ts.astimezone(timezone.utc).timestamp() * 1000)
+            pressure_points.append({"t": t_ms, "v": v})
+
+    valve_points = []
+    for t in _influx_query(q_valve):
+        for r in t.records:
+            ts = r.get_time()
+            if not ts:
+                continue
+            st = (r.values.get("valve_state") or "").lower()
+            # normalize a bit
+            if st in ("lahti", "open", "opened", "on"):
+                st = "open"
+            elif st in ("kinni", "closed", "off"):
+                st = "closed"
+            t_ms = int(ts.astimezone(timezone.utc).timestamp() * 1000)
+            valve_points.append({"t": t_ms, "state": st})
+
+    # dedupe consecutive same state
+    vp = []
+    last = None
+    for p in valve_points:
+        if p["state"] and p["state"] != last:
+            vp.append(p)
+            last = p["state"]
+    valve_points = vp
+
+    events = []
+    for t in _influx_query(q_events):
+        for r in t.records:
+            ts = r.get_time()
+            if not ts:
+                continue
+            p_now = fmt_float(r.values.get("pressure_now"))
+            p_prev = r.values.get("pressure_prev")
+            if p_prev is None:
+                p_prev = r.values.get("pressure_30ms_ago")
+            p_prev = fmt_float(p_prev)
+
+            delta = None
+            if p_now is not None and p_prev is not None:
+                delta = p_now - p_prev
+
+            st = (r.values.get("valve_state") or "").lower()
+            if st in ("lahti", "open", "opened", "on"):
+                st = "open"
+            elif st in ("kinni", "closed", "off"):
+                st = "closed"
+
+            events.append({
+                "time_ms": int(ts.astimezone(timezone.utc).timestamp() * 1000),
+                "time_hm": ts.astimezone(timezone.utc).strftime("%H:%M:%S"),
+                "valve_state": st,
+                "pressure_prev": p_prev,
+                "pressure_now": p_now,
+                "delta": delta
+            })
+
+    return {
+        "uid": uid,
+        "hours": hours,
+        "pressure_points": pressure_points,
+        "valve_points": valve_points,
+        "events": events
+    }
+ 
 def template_path_for(uid: str) -> Path:
     safe = "".join(ch for ch in uid if ch.isalnum() or ch in ("_", "-", "."))
     return TEMPLATES_DIR / f"{safe}.html"
@@ -167,6 +290,99 @@ def load_latest_devices():
 
 
 # ===================== ROUTES =====================
+@app.get("/api/device/<uid>/history")
+def api_device_history(uid: str):
+    hours = int(request.args.get("hours", "24"))
+    limit = int(request.args.get("limit", "50"))
+    data = load_device_history(uid, hours=hours, limit_events=limit)
+    return jsonify(data)
+
+
+@app.get("/api/export")
+def api_export():
+    """
+    Download CSV/JSON of time range.
+    Query:
+      uid=... (optional)
+      hours=24 (optional, default 24)
+      format=csv|json (default csv)
+      limit=5000 (optional)
+    """
+    uid = request.args.get("uid")
+    hours = int(request.args.get("hours", "24"))
+    fmt = (request.args.get("format", "csv") or "csv").lower()
+    limit = int(request.args.get("limit", "5000"))
+
+    range_expr = f"-{hours}h"
+    uid_filter = f'|> filter(fn: (r) => r.device_id == "{uid}")' if uid else ""
+
+    q = f"""
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: {range_expr})
+  |> filter(fn: (r) => r._measurement == "{MEASUREMENT}")
+  |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
+  {uid_filter}
+  |> filter(fn: (r) => r._field == "pressure_now" or r._field == "pressure_prev" or r._field == "pressure_30ms_ago")
+  |> keep(columns: ["_time","device_id","valve_state","_field","_value"])
+  |> pivot(rowKey: ["_time","device_id","valve_state"], columnKey: ["_field"], valueColumn: "_value")
+  |> sort(columns: ["_time"], desc: false)
+  |> limit(n: {limit})
+"""
+
+    rows = []
+    for t in _influx_query(q):
+        for r in t.records:
+            ts = r.values.get("_time") or r.get_time()
+            if not ts:
+                continue
+            device_id = r.values.get("device_id")
+            valve_state = r.values.get("valve_state")
+            p_now = fmt_float(r.values.get("pressure_now"))
+            p_prev = r.values.get("pressure_prev")
+            if p_prev is None:
+                p_prev = r.values.get("pressure_30ms_ago")
+            p_prev = fmt_float(p_prev)
+            delta = (p_now - p_prev) if (p_now is not None and p_prev is not None) else None
+
+            t_utc = ts.astimezone(timezone.utc)
+            rows.append({
+                "device_id": device_id,
+                "timestamp": int(t_utc.timestamp()),      # seconds
+                "timestamp_ms": int(t_utc.timestamp()*1000),
+                "valve_state": valve_state,
+                "pressure_30ms_ago": p_prev,
+                "pressure_now": p_now,
+                "pressure_delta": delta
+            })
+
+    if fmt == "json":
+        return Response(
+            json.dumps(rows, ensure_ascii=False),
+            mimetype="application/json",
+            headers={"Content-Disposition": "attachment; filename=export.json"}
+        )
+
+    # CSV default
+    import csv
+    from io import StringIO
+
+    buf = StringIO()
+    w = csv.DictWriter(buf, fieldnames=[
+        "device_id","timestamp","timestamp_ms","valve_state",
+        "pressure_30ms_ago","pressure_now","pressure_delta"
+    ])
+    w.writeheader()
+    for r in rows:
+        w.writerow(r)
+
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=export.csv"}
+    )
+
+
+
 @app.get("/health")
 def health():
     try:
@@ -205,10 +421,17 @@ def events_devices():
         yield "retry: 2000\n\n"
         while True:
             try:
+                with _cache_lock:
+                    cache_ts = _latest_cache["ts"]
+                    cache_error = _latest_cache["error"]
+
                 payload = {
                     "server_time_utc": utc_now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "cache_age_ms": int((time.time() - cache_ts) * 1000) if cache_ts else None,
+                    "cache_error": cache_error,
                     "devices": load_latest_devices()
                 }
+
                 yield ": keepalive\n\n"
                 yield "event: devices\n"
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
@@ -590,6 +813,8 @@ th:nth-child(6), td:nth-child(6){
       console.warn("SSE error:", payload);
     }catch(e){}
   });
+
+
 </script>
 
 </body>
@@ -717,6 +942,21 @@ a{ color:#8ab4ff; text-decoration:none; }
 
   es.onopen = () => { if (conn) conn.textContent = "connected"; };
   es.onerror = () => { if (conn) conn.textContent = "reconnecting…"; };
+  async function loadHistory(){
+    try{
+      const res = await fetch(`/api/device/${encodeURIComponent(uid)}/history?hours=24&limit=50`, { cache: "no-store" });
+      const snap = await res.json();
+      if (typeof window.handleHistorySnapshot === "function"){
+        window.handleHistorySnapshot(snap);
+      }
+    }catch(e){}
+  }
+
+  // load history once on open
+  loadHistory();
+
+  // optional: refresh history every 20s (keeps table/timeline sane)
+  setInterval(loadHistory, 20000);
 
   es.addEventListener("devices", (evt) => {
     try{

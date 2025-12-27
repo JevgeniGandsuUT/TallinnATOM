@@ -36,7 +36,7 @@ PubSubClient mqtt(wifiClient);
 String topicStatus; // sensors/<deviceId>/status
 String topicInit; // sensors/<deviceId>/init
 unsigned long lastPublishMs = 0;
-const uint32_t PUBLISH_INTERVAL_MS = 1000; // ms
+const uint32_t PUBLISH_INTERVAL_MS = 250; // ms
 const char* MQTT_HOST = "10.8.0.1";   // broker (droplet / VPN)
 const int   MQTT_PORT = 1883;
 
@@ -321,8 +321,16 @@ void loop() {
   mqtt.loop();
 
   unsigned long now = millis();
+
   if (mqtt.connected() && bufCount > 0 && now - lastPublishMs >= PUBLISH_INTERVAL_MS) {
     lastPublishMs = now;
-    publishOldestSample();
+
+    // отправим до 5 сообщений за раз, чтобы быстро догнать
+    int burst = 5;
+    while (burst-- > 0 && mqtt.connected() && bufCount > 0) {
+      if (!publishOldestSample()) break; // если publish не прошёл — стоп
+      mqtt.loop();
+      delay(2); // маленькая пауза, чтобы не задушить стек
+    }
   }
 }
