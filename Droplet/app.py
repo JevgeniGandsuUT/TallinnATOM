@@ -90,12 +90,20 @@ def load_device_history(uid: str, hours: int = 24, limit_events: int = 50):
         "valve_points": [{"t": ms, "state": "open|closed|?"}, ...],
         "events": [{"time_ms":..., "time_hm":..., "valve_state":..., "pressure_prev":..., "pressure_now":..., "delta":...}, ...]
       }
+
+    FIX:
+      valve_state is a TAG => creates 2 series (open/closed).
+      We "glue" series via Flux group(columns:["device_id","_field"]).
+      Also pivot rowKey MUST NOT include valve_state.
     """
     # safety limits
-    hours = max(1, min(int(hours), 168))          # 1h..168h
-    limit_events = max(1, min(int(limit_events), 500))  # 1..500
+    hours = max(1, min(int(hours), 168))                # 1h..168h
+    limit_events = max(1, min(int(limit_events), 500)) # 1..500
 
     range_expr = f"-{hours}h"
+
+    # For test/dev we sample each 1s (instead of 10s). You can change to 2s/5s later.
+    WINDOW_EVERY = os.getenv("HISTORY_WINDOW_EVERY", "1s")
 
     # 1) pressure_now series for chart
     q_pressure = f"""
@@ -105,12 +113,13 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now")
-  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)
+  |> group(columns: ["device_id","_field"])                   // FIX: glue open/closed series
+  |> aggregateWindow(every: {WINDOW_EVERY}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_value"])
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # 2) valve_state timeline (we read valve_state tag from same points)
+    # 2) valve_state timeline (we read valve_state TAG from pressure_now points)
     q_valve = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -118,12 +127,13 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now")
-  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)
+  |> group(columns: ["device_id","_field"])                   // FIX: glue open/closed series
+  |> aggregateWindow(every: {WINDOW_EVERY}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","valve_state"])
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # 3) last switch events table (pressure_prev/30ms_ago + pressure_now + valve_state)
+    # 3) switch events table (pressure_prev/30ms_ago + pressure_now + valve_state)
     q_events = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -131,9 +141,10 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now" or r._field == "pressure_prev" or r._field == "pressure_30ms_ago")
-  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)
+  |> group(columns: ["device_id","_field"])                   // FIX: glue open/closed series
+  |> aggregateWindow(every: {WINDOW_EVERY}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_field","_value","valve_state"])
-  |> pivot(rowKey: ["_time","valve_state"], columnKey: ["_field"], valueColumn: "_value")
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")  // FIX: rowKey without valve_state
   |> sort(columns: ["_time"], desc: false)
 """
 
@@ -241,11 +252,17 @@ def has_init_template(uid: str) -> bool:
 
 
 def _load_latest_devices_from_influx():
+    """
+    FIX:
+      valve_state is a TAG => open/closed creates different series.
+      last() works per-series, so we must group by device_id+_field to glue.
+    """
     query = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {INFLUX_RANGE})
   |> filter(fn: (r) => r._measurement == "{MEASUREMENT}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
+  |> group(columns: ["device_id","_field"])      // FIX: glue open/closed series
   |> last()
 """
 
@@ -361,8 +378,9 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.team == "{TEAM_FILTER}")
   {uid_filter}
   |> filter(fn: (r) => r._field == "pressure_now" or r._field == "pressure_prev" or r._field == "pressure_30ms_ago")
+  |> group(columns: ["device_id","_field"])     // FIX: glue open/closed series
   |> keep(columns: ["_time","device_id","valve_state","_field","_value"])
-  |> pivot(rowKey: ["_time","device_id","valve_state"], columnKey: ["_field"], valueColumn: "_value")
+  |> pivot(rowKey: ["_time","device_id"], columnKey: ["_field"], valueColumn: "_value") // FIX: no valve_state in rowKey
   |> sort(columns: ["_time"], desc: false)
   |> limit(n: {limit})
 """
@@ -373,13 +391,16 @@ from(bucket: "{INFLUX_BUCKET}")
             ts = r.values.get("_time") or r.get_time()
             if not ts:
                 continue
+
             device_id = r.values.get("device_id")
             valve_state = r.values.get("valve_state")
+
             p_now = fmt_float(r.values.get("pressure_now"))
             p_prev = r.values.get("pressure_prev")
             if p_prev is None:
                 p_prev = r.values.get("pressure_30ms_ago")
             p_prev = fmt_float(p_prev)
+
             delta = (p_now - p_prev) if (p_now is not None and p_prev is not None) else None
 
             t_utc = ts.astimezone(timezone.utc)
