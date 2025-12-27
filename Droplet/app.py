@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, render_template_string, jsonify, Response, request  
+from flask import Flask, render_template_string, jsonify, Response, request
 from influxdb_client import InfluxDBClient
 from dotenv import load_dotenv
 
@@ -38,6 +38,9 @@ TEMPLATES_DIR = Path(os.getenv("DEVICE_TEMPLATES_DIR", str(BASE_DIR / "device_te
 DEVICES_JSON_PATH = Path(os.getenv("DEVICES_JSON_PATH", str(BASE_DIR / "devices.json")))  # kept for future use
 
 app = Flask(__name__)
+
+# make sure dir exists
+TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ===================== HELPERS =====================
@@ -71,15 +74,30 @@ def fmt_float(v):
     except Exception:
         return None
 
+
 def _influx_query(query: str):
     with influx_client() as client:
         return client.query_api().query(query)
 
 
 def load_device_history(uid: str, hours: int = 24, limit_events: int = 50):
+    """
+    Returns:
+      {
+        "uid": "...",
+        "hours": 24,
+        "pressure_points": [{"t": ms, "v": float}, ...],
+        "valve_points": [{"t": ms, "state": "open|closed|?"}, ...],
+        "events": [{"time_ms":..., "time_hm":..., "valve_state":..., "pressure_prev":..., "pressure_now":..., "delta":...}, ...]
+      }
+    """
+    # safety limits
+    hours = max(1, min(int(hours), 168))          # 1h..168h
+    limit_events = max(1, min(int(limit_events), 500))  # 1..500
+
     range_expr = f"-{hours}h"
 
-    # 1) pressure_now series for chart (we keep one chart)
+    # 1) pressure_now series for chart
     q_pressure = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -91,8 +109,8 @@ from(bucket: "{INFLUX_BUCKET}")
   |> keep(columns: ["_time","_value"])
   |> sort(columns: ["_time"], desc: false)
 """
-    # 2) valve_state timeline (take last per time bucket to reduce spam)
-    # We’ll sample every 10s (tweak if needed)
+
+    # 2) valve_state timeline (we read valve_state tag from same points)
     q_valve = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -105,7 +123,7 @@ from(bucket: "{INFLUX_BUCKET}")
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # 3) last 50 events table (pressure_prev/30ms_ago + pressure_now + valve_state)
+    # 3) last switch events table (pressure_prev/30ms_ago + pressure_now + valve_state)
     q_events = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -139,11 +157,12 @@ from(bucket: "{INFLUX_BUCKET}")
             if not ts:
                 continue
             st = (r.values.get("valve_state") or "").lower()
-            # normalize a bit
-            if st in ("lahti", "open", "opened", "on"):
+            if st in ("lahti", "open", "opened", "on", "1", "true"):
                 st = "open"
-            elif st in ("kinni", "closed", "off"):
+            elif st in ("kinni", "closed", "off", "0", "false"):
                 st = "closed"
+            else:
+                st = st or "?"
             t_ms = int(ts.astimezone(timezone.utc).timestamp() * 1000)
             valve_points.append({"t": t_ms, "state": st})
 
@@ -151,7 +170,7 @@ from(bucket: "{INFLUX_BUCKET}")
     vp = []
     last = None
     for p in valve_points:
-        if p["state"] and p["state"] != last:
+        if p["state"] != last:
             vp.append(p)
             last = p["state"]
     valve_points = vp
@@ -166,14 +185,14 @@ from(bucket: "{INFLUX_BUCKET}")
                 continue
 
             st = (r.values.get("valve_state") or "").lower()
-            if st in ("lahti", "open", "opened", "on"):
+            if st in ("lahti", "open", "opened", "on", "1", "true"):
                 st = "open"
-            elif st in ("kinni", "closed", "off"):
+            elif st in ("kinni", "closed", "off", "0", "false"):
                 st = "closed"
             else:
                 st = st or "?"
 
-            # только смена состояния
+            # keep only state changes (switch events)
             if last_state is not None and st == last_state:
                 continue
             last_state = st
@@ -198,13 +217,20 @@ from(bucket: "{INFLUX_BUCKET}")
                 "delta": delta
             })
 
-    # показываем последние 50 переключений (если их больше)
+    # keep last N events (newest at top for UI)
     if len(events) > limit_events:
         events = events[-limit_events:]
-    # для UI "last 50" обычно сверху новые
     events = list(reversed(events))
 
-    
+    return {
+        "uid": uid,
+        "hours": hours,
+        "pressure_points": pressure_points,
+        "valve_points": valve_points,
+        "events": events
+    }
+
+
 def template_path_for(uid: str) -> Path:
     safe = "".join(ch for ch in uid if ch.isalnum() or ch in ("_", "-", "."))
     return TEMPLATES_DIR / f"{safe}.html"
@@ -215,7 +241,6 @@ def has_init_template(uid: str) -> bool:
 
 
 def _load_latest_devices_from_influx():
-    # last() returns last per series (device_id + field)
     query = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {INFLUX_RANGE})
@@ -323,6 +348,9 @@ def api_export():
     fmt = (request.args.get("format", "csv") or "csv").lower()
     limit = int(request.args.get("limit", "5000"))
 
+    hours = max(1, min(hours, 168))
+    limit = max(1, min(limit, 50000))
+
     range_expr = f"-{hours}h"
     uid_filter = f'|> filter(fn: (r) => r.device_id == "{uid}")' if uid else ""
 
@@ -358,7 +386,7 @@ from(bucket: "{INFLUX_BUCKET}")
             rows.append({
                 "device_id": device_id,
                 "timestamp": int(t_utc.timestamp()),      # seconds
-                "timestamp_ms": int(t_utc.timestamp()*1000),
+                "timestamp_ms": int(t_utc.timestamp() * 1000),
                 "valve_state": valve_state,
                 "pressure_30ms_ago": p_prev,
                 "pressure_now": p_now,
@@ -378,8 +406,8 @@ from(bucket: "{INFLUX_BUCKET}")
 
     buf = StringIO()
     w = csv.DictWriter(buf, fieldnames=[
-        "device_id","timestamp","timestamp_ms","valve_state",
-        "pressure_30ms_ago","pressure_now","pressure_delta"
+        "device_id", "timestamp", "timestamp_ms", "valve_state",
+        "pressure_30ms_ago", "pressure_now", "pressure_delta"
     ])
     w.writeheader()
     for r in rows:
@@ -390,7 +418,6 @@ from(bucket: "{INFLUX_BUCKET}")
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=export.csv"}
     )
-
 
 
 @app.get("/health")
@@ -823,8 +850,6 @@ th:nth-child(6), td:nth-child(6){
       console.warn("SSE error:", payload);
     }catch(e){}
   });
-
-
 </script>
 
 </body>
@@ -885,10 +910,6 @@ a{ color:#8ab4ff; text-decoration:none; }
 
     fragment = p.read_text(encoding="utf-8", errors="replace")
 
-    # Wrapper page:
-    # - loads Chart.js
-    # - injects fragment
-    # - subscribes to SSE and calls window.handleSensorUpdate(payload)
     page = r"""
 <!doctype html>
 <html lang="en">
@@ -952,6 +973,7 @@ a{ color:#8ab4ff; text-decoration:none; }
 
   es.onopen = () => { if (conn) conn.textContent = "connected"; };
   es.onerror = () => { if (conn) conn.textContent = "reconnecting…"; };
+
   async function loadHistory(){
     try{
       const res = await fetch(`/api/device/${encodeURIComponent(uid)}/history?hours=24&limit=50`, { cache: "no-store" });
@@ -965,8 +987,8 @@ a{ color:#8ab4ff; text-decoration:none; }
   // load history once on open
   loadHistory();
 
-  // optional: refresh history every 20s (keeps table/timeline sane)
-  //setInterval(loadHistory, 20000);
+  // optional periodic refresh:
+  // setInterval(loadHistory, 20000);
 
   es.addEventListener("devices", (evt) => {
     try{

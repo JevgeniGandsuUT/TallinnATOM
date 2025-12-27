@@ -26,7 +26,7 @@ int pinSolenoid = 26;
 int pinSensorBar = 32;  // GPIO32 is ADC1_CH4
 double lastBar = 0.0;
 unsigned long lastSensorReadMs = 0;
-const uint32_t SENSOR_INTERVAL_MS = 500;   
+const uint32_t SENSOR_INTERVAL_MS = 1000;   
 
 // =================== Lab3 Buffer (last 100) + ACK ===================
 String deviceId = "ESP32_TallinnAtom_01";
@@ -36,7 +36,7 @@ PubSubClient mqtt(wifiClient);
 String topicStatus; // sensors/<deviceId>/status
 String topicInit; // sensors/<deviceId>/init
 unsigned long lastPublishMs = 0;
-const uint32_t PUBLISH_INTERVAL_MS = 500; // ms
+const uint32_t PUBLISH_INTERVAL_MS = 1000; // ms
 const char* MQTT_HOST = "10.8.0.1";   // broker (droplet / VPN)
 const int   MQTT_PORT = 1883;
 
