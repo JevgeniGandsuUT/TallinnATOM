@@ -81,18 +81,16 @@ def _influx_query(query: str):
 
 
 def load_device_history(uid: str, hours: int = 24, limit_events: int = 50):
-    """
-    ONLY switch events (valve_state changes)
-    """
     hours = max(1, min(int(hours), 168))
     limit_events = max(1, min(int(limit_events), 500))
 
     range_expr = f"-{hours}h"
 
-    # ⚠️ ключевой фикс: мельче окно, иначе last() сожрёт переключения
-    WINDOW_EVERY = os.getenv("HISTORY_WINDOW_EVERY", "1s")
+    # 🔑 разные окна: мелкое для событий, крупное для графика
+    WIN_EVENTS = os.getenv("HISTORY_WINDOW_EVERY", "1s")
+    WIN_CHART  = "10s"
 
-    # 1) pressure_now for chart (можно оставить 10s если хочешь легче график)
+    # ---------- 1) chart: pressure_now ----------
     q_pressure = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -101,12 +99,12 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now")
   |> group(columns: ["device_id","_field"])
-  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)
+  |> aggregateWindow(every: {WIN_CHART}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_value"])
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # 2) valve timeline (1s)
+    # ---------- 2) valve timeline ----------
     q_valve = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -115,13 +113,12 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now")
   |> group(columns: ["device_id","_field"])
-  |> aggregateWindow(every: {WINDOW_EVERY}, fn: last, createEmpty: false)
+  |> aggregateWindow(every: {WIN_EVENTS}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","valve_state"])
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # 3) events stream: pressure_now + prev in 1s window, потом python выберет только смену valve_state
-    #    ВАЖНО: pivot rowKey только по _time (НЕ valve_state), иначе будут разные строки на один таймстемп
+    # ---------- 3) EVENTS = ONLY valve flips ----------
     q_events = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {range_expr})
@@ -130,36 +127,34 @@ from(bucket: "{INFLUX_BUCKET}")
   |> filter(fn: (r) => r.device_id == "{uid}")
   |> filter(fn: (r) => r._field == "pressure_now" or r._field == "pressure_prev" or r._field == "pressure_30ms_ago")
   |> group(columns: ["device_id","_field"])
-  |> aggregateWindow(every: {WINDOW_EVERY}, fn: last, createEmpty: false)
+  |> aggregateWindow(every: {WIN_EVENTS}, fn: last, createEmpty: false)
   |> keep(columns: ["_time","_field","_value","valve_state"])
-  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> pivot(rowKey: ["_time","valve_state"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"], desc: false)
 """
 
-    # ---- execute ----
+    # ---------- EXEC ----------
     pressure_points = []
     for t in _influx_query(q_pressure):
         for r in t.records:
             ts = r.get_time()
-            if not ts:
-                continue
-            v = fmt_float(r.get_value())
-            if v is None:
-                continue
-            t_ms = int(ts.astimezone(timezone.utc).timestamp() * 1000)
-            pressure_points.append({"t": t_ms, "v": v})
+            if ts:
+                pressure_points.append({
+                    "t": int(ts.timestamp() * 1000),
+                    "v": float(r.get_value())
+                })
 
     valve_points = []
     for t in _influx_query(q_valve):
         for r in t.records:
             ts = r.get_time()
-            if not ts:
-                continue
-            st = _norm_valve_state(r.values.get("valve_state"))
-            t_ms = int(ts.astimezone(timezone.utc).timestamp() * 1000)
-            valve_points.append({"t": t_ms, "state": st})
+            if ts:
+                valve_points.append({
+                    "t": int(ts.timestamp() * 1000),
+                    "state": _norm_valve_state(r.values.get("valve_state"))
+                })
 
-    # dedupe timeline
+    # dedupe valve timeline
     vp, last = [], None
     for p in valve_points:
         if p["state"] != last:
@@ -167,55 +162,8 @@ from(bucket: "{INFLUX_BUCKET}")
             last = p["state"]
     valve_points = vp
 
-    # events = только переключения
-    events = []
-    last_state = None
+    # ---- ONLY
 
-    for t in _influx_query(q_events):
-        for r in t.records:
-            ts = r.get_time()
-            if not ts:
-                continue
-
-            st = _norm_valve_state(r.values.get("valve_state"))
-
-            # ✅ только смена состояния
-            if last_state is not None and st == last_state:
-                continue
-            last_state = st
-
-            p_now = fmt_float(r.values.get("pressure_now"))
-            p_prev = r.values.get("pressure_prev")
-            if p_prev is None:
-                p_prev = r.values.get("pressure_30ms_ago")
-            p_prev = fmt_float(p_prev)
-
-            delta = None
-            if p_now is not None and p_prev is not None:
-                delta = p_now - p_prev
-
-            t_utc = ts.astimezone(timezone.utc)
-            events.append({
-                "time_ms": int(t_utc.timestamp() * 1000),
-                "time_hm": t_utc.strftime("%H:%M:%S"),
-                "valve_state": st,
-                "pressure_prev": p_prev,
-                "pressure_now": p_now,
-                "delta": delta
-            })
-
-    # оставим последние N переключений, сверху новые
-    if len(events) > limit_events:
-        events = events[-limit_events:]
-    events = list(reversed(events))
-
-    return {
-        "uid": uid,
-        "hours": hours,
-        "pressure_points": pressure_points,
-        "valve_points": valve_points,
-        "events": events
-    }
 
 def _norm_valve_state(st) -> str:
     st = (st or "").lower()
