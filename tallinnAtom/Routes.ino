@@ -80,4 +80,29 @@ void registerRoutes() {
 
   // --- HMAC salajase võtme seadmine (ainult puhas AP režiim) ---
   server.on("/setKey", HTTP_GET, handleNewKey);
+
+  server.on("/downloadCaptureCsv", HTTP_GET, []() {
+  if (!LittleFS.exists(CAPTURE_CSV_PATH)) {
+    server.send(404, "text/plain", "capture_events.csv not found");
+    return;
+  }
+
+  File f = LittleFS.open(CAPTURE_CSV_PATH, "r");
+  if (!f) {
+    server.send(500, "text/plain", "open failed");
+    return;
+  }
+
+  server.sendHeader("Content-Type", "text/csv");
+  server.sendHeader("Content-Disposition", "attachment; filename=\"capture_events.csv\"");
+  server.streamFile(f, "text/csv");
+  f.close();
+});
+
+server.on("/eraseCaptureCsv", HTTP_GET, []() {
+  if (LittleFS.exists(CAPTURE_CSV_PATH)) LittleFS.remove(CAPTURE_CSV_PATH);
+  server.send(200, "text/plain", "OK");
+});
+
+
 }

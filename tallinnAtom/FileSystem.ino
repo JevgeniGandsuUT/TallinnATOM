@@ -75,3 +75,45 @@ void handleFileRequest() {
     server.send(404, "text/plain", "Not found");
   }
 }
+
+void appendLine(File& f, const String& s) {
+  f.print(s);
+  f.print("\n");
+}
+
+void ensureCsvHeader(File& f) {
+  // если файл пустой — пишем заголовок
+  if (f.size() == 0) {
+    appendLine(f, "event_id,i,dt_us,adc_raw,volts");
+  }
+}
+
+void writeEventToCsv(uint32_t eventId, uint16_t n) {
+  File f = LittleFS.open(CAPTURE_CSV_PATH, "a");
+  if (!f) {
+    Serial.println("[CSV] open FAILED");
+    return;
+  }
+
+  ensureCsvHeader(f);
+
+  const uint8_t STEP = 1;
+
+  for (uint16_t i = 0; i < n; i += STEP) {
+    float v = (g_adc[i] * 3.3f) / 4095.0f;
+
+    // event_id,i,dt_us,adc_raw,volts
+    f.printf("%lu,%u,%lu,%u,%.4f\n",
+      (unsigned long)eventId,
+      (unsigned)i,
+      (unsigned long)g_dtUs[i],
+      (unsigned)g_adc[i],
+      v
+    );
+  }
+
+  f.printf("END_EVENT,%lu\n", (unsigned long)eventId);
+
+  f.close();
+  Serial.printf("[CSV] saved event=%lu rows=%u\n", (unsigned long)eventId, (unsigned)n);
+}

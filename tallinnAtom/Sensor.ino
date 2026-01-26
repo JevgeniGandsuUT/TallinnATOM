@@ -31,21 +31,25 @@ void handleSolenoidButton() {
   if (state != lastButtonState && (now - lastButtonChangeMs) > BUTTON_DEBOUNCE_MS) {
     lastButtonChangeMs = now;
     lastButtonState = state;
-
+    bool solenoidOn = digitalRead(pinSolenoid) == HIGH;
+       // kuvame muudatuse füüsiliselt
     // реагируем только на нажатие
     if (state == LOW) {
 
-      bool solenoidOn = digitalRead(pinSolenoid) == HIGH;
+      
 
       // toggle solenoid
       solenoidOn = !solenoidOn;
 
       digitalWrite(pinSolenoid, solenoidOn ? HIGH : LOW);
-      digitalWrite(csvLED, solenoidOn ? HIGH : LOW);
-
+      digitalWrite(makePhotoPin, solenoidOn ? HIGH : LOW);
+      
       Serial.print("Solenoid is now: ");
       Serial.println(solenoidOn ? "OPEN" : "CLOSED");
     }
+    leds[0] = solenoidOn ?CRGB(0, 255, 0): CRGB(255, 0, 0);
+
+      FastLED.show();
   }
 }
 
@@ -53,7 +57,7 @@ void handleSolenoidButton() {
 double readPressureBar() {
   int val = analogRead(pinSensorBar);
 
-  // Pingejaguri koefitsient (sinu skeemi järgi)
+  // Pingejaguri koefitsient
   double dividerCoefficient = 1.48809;
   double sensorVoltage = val * dividerCoefficient;
 
