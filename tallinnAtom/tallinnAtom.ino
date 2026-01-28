@@ -23,7 +23,7 @@
 static const char* CAPTURE_CSV_PATH = "/capture_events.csv";
 
 
-static const uint32_t SOL_CLOSE_DELAY_US = 60000000UL;
+static const uint32_t SOL_CLOSE_DELAY_US = 5000000UL;
 
 int pinG25 = 25;
 double g25Value = 0;
@@ -54,6 +54,10 @@ static bool     g25Rising = false;
 static uint32_t g25AboveSinceUs = 0;
 static uint32_t g25LastPollUs = 0;
 
+
+const uint32_t MQTT_SAMPLE_INTERVAL_MS = 2000;  // класть в буфер раз в 2 сек
+unsigned long lastMqttSampleMs = 0;
+
 struct Sample {
   uint32_t seq;
   uint64_t ts_ms;
@@ -80,7 +84,7 @@ PubSubClient mqtt(wifiClient);
 String topicStatus;
 String topicInit;
 unsigned long lastPublishMs = 0;
-const uint32_t PUBLISH_INTERVAL_MS = 1000;
+const uint32_t PUBLISH_INTERVAL_MS = 2000;
 const char* MQTT_HOST = "10.8.0.1";
 const int   MQTT_PORT = 1883;
 
@@ -569,13 +573,13 @@ void loop() {
   mqtt.loop();
 
   unsigned long now = millis();
-  if (mqtt.connected() && bufCount > 0 && now - lastPublishMs >= PUBLISH_INTERVAL_MS) {
+  if (mqtt.connected() && bufCount > 0 && (now - lastPublishMs) >= PUBLISH_INTERVAL_MS) {
     lastPublishMs = now;
-    int burst = 5;
+
+    int burst = 2;  // было 5
     while (burst-- > 0 && mqtt.connected() && bufCount > 0) {
       if (!publishOldestSample()) break;
       mqtt.loop();
-      delay(2);
     }
   }
 

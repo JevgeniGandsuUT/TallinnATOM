@@ -79,15 +79,28 @@ void updateSensorAndDisplay() {
     // display
     displayBarOn7Seg(lastBar);
 
-    // buffer push
-    Sample s;
-    s.seq = nextSeq++;
-    s.ts_ms = g_timeSynced ? epochMs() : 0;
-    s.pressure_30ms_ago = (float)prevBar;
-    s.pressure_now = (float)lastBar;
-    s.valve_open = (digitalRead(pinSolenoid) == HIGH);
+    bool valveOpen = (digitalRead(pinSolenoid) == HIGH);
 
-    bufPush(s);
+    maybeEnqueueMqttSample(lastBar, prevBar, valveOpen);
+
+
     prevBar = lastBar;
   }
+}
+
+
+void maybeEnqueueMqttSample(double barNow, double prevBar, bool valveOpen) {
+  unsigned long now = millis();
+  if (now - lastMqttSampleMs < MQTT_SAMPLE_INTERVAL_MS) return;
+  lastMqttSampleMs = now;
+
+  Sample s;
+  s.seq = nextSeq++;
+  s.ts_ms = g_timeSynced ? epochMs() : 0;
+  s.valve_open = valveOpen;
+
+  s.pressure_30ms_ago = (float)prevBar;
+  s.pressure_now      = (float)barNow;
+
+  bufPush(s);
 }
